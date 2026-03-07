@@ -46,7 +46,8 @@ export const authService = {
     age: number,
     gender: string,
     location: string,
-    hasPreviousStressIssues: boolean
+    hasPreviousStressIssues: boolean,
+    phone_number?: string
   ): Promise<any> {
     const { data } = await api.post('/api/auth/register/user', {
       name,
@@ -56,6 +57,7 @@ export const authService = {
       gender,
       location,
       has_previous_stress_issues: hasPreviousStressIssues,
+      phone_number
     });
     return data;
   },
@@ -67,7 +69,8 @@ export const authService = {
     license_number: string,
     state_medical_council: string,
     specialization: string,
-    available_slots: string[]
+    available_slots: string[],
+    phone_number?: string
   ): Promise<any> {
     const { data } = await api.post('/api/auth/register/doctor', {
       name,
@@ -77,6 +80,7 @@ export const authService = {
       state_medical_council,
       specialization,
       available_slots,
+      phone_number
     });
     return data;
   },
@@ -140,5 +144,6 @@ export const authService = {
     return !!this.getUser();
   },
 };
+
 
 export default api;

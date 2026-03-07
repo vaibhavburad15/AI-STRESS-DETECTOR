@@ -21,6 +21,7 @@ class UserRegister(BaseModel):
     gender: str = Field(..., description="Gender (Male/Female/Other)")
     location: str = Field(..., min_length=2, description="City or location")
     has_previous_stress_issues: bool = Field(default=False)
+    phone_number: Optional[str] = Field(None, description="SMS-enabled phone number in E.164 format e.g. +919876543210")
     
     @validator('gender')
     def validate_gender(cls, v):
@@ -56,6 +57,7 @@ class DoctorRegister(BaseModel):
     state_medical_council: str
     specialization: str
     available_slots: List[str] = []
+    phone_number: Optional[str] = Field(None, description="SMS-enabled phone number in E.164 format e.g. +919876543210")
 
 class DoctorResponse(BaseModel):
     id: str

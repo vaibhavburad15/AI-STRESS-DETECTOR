@@ -10,6 +10,7 @@ from ..models import (
 from ..database import users_collection, doctors_collection, admin_collection
 from ..auth import verify_password, get_password_hash
 from ..email_service import email_service
+from ..sms_service import sms_service
 from ..otp_utils import generate_otp, store_otp, verify_otp
 from ..nmc_verification import (
     build_nmc_profile,
@@ -58,6 +59,7 @@ async def register_user(user: UserRegister):
         "gender": user.gender,
         "location": user.location,
         "has_previous_stress_issues": user.has_previous_stress_issues,
+        "phone_number": user.phone_number or "",
         "medical_document_path": None,
         "role": "user",
         "email_verified": False,
@@ -73,6 +75,8 @@ async def register_user(user: UserRegister):
     otp = generate_otp()
     store_otp(user.email, otp, "user")
     email_service.send_otp_email(user.email, otp, "user")
+    if user.phone_number:
+        sms_service.send_otp_sms(user.phone_number, otp, "user")
     
     return {
         "user": {
@@ -143,6 +147,7 @@ async def register_doctor(doctor: DoctorRegister):
         "state_medical_council": doctor.state_medical_council,
         "specialization": doctor.specialization,
         "available_slots": doctor.available_slots,
+        "phone_number": doctor.phone_number or "",
         "role": "doctor",
         "is_verified": False,  # Admin approval is still required
         "nmc_verified": True,
@@ -160,6 +165,8 @@ async def register_doctor(doctor: DoctorRegister):
     otp = generate_otp()
     store_otp(doctor.email, otp, "doctor")
     email_service.send_otp_email(doctor.email, otp, "doctor")
+    if doctor.phone_number:
+        sms_service.send_otp_sms(doctor.phone_number, otp, "doctor")
     
     return {
         "user": {
@@ -229,8 +236,10 @@ async def verify_email_with_otp(request: OTPVerify):
             detail="User not found"
         )
     
-    # Send welcome email
+    # Send welcome email + SMS
     email_service.send_welcome_email(request.email, user["name"], user_type)
+    if user.get("phone_number"):
+        sms_service.send_welcome_sms(user["phone_number"], user["name"], user_type)
     
     message = "Email verified successfully! You can now log in."
     if user_type == "doctor" and not user.get("is_verified", False):

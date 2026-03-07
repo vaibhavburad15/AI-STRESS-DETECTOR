@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Brain,
   BrainCircuit,
   CalendarDays,
   ChevronRight,
@@ -281,12 +280,10 @@ const UserDashboard = () => {
         <main className="userdash-main">
           <header className="userdash-header animate-fadeIn">
             <div className="flex items-center gap-3">
-              <div className="userdash-brain-icon">
-                <Brain className="h-5 w-5 text-blue-700" />
-              </div>
+              
               <div>
-                <h1 className="text-2xl font-semibold text-slate-900">User Dashboard</h1>
-                <p className="text-sm text-slate-600">Welcome, {user?.name || 'User'}!</p>
+               
+                <p className="text-2xl font-semibold text-slate-900">Welcome, {user?.name || 'User'}!</p>
               </div>
             </div>
             <button

@@ -25,6 +25,7 @@ load_dotenv()
 
 # MongoDB connection
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/aistressdetector")
+client: MongoClient | None = None
 
 # ✅ OPTIMIZED: Create client with connection pooling and timeouts
 try:
@@ -45,6 +46,9 @@ try:
     print(f"✅ Connected to MongoDB: {MONGODB_URL}")
     
 except ServerSelectionTimeoutError as e:
+    if client is not None:
+        client.close()
+        client = None
     print(f"❌ Failed to connect to MongoDB: {e}")
     print("⚠️ Starting server without database connection...")
     db = None
@@ -61,6 +65,21 @@ class _MissingCollection:
             f"MongoDB is unavailable; cannot call '{method_name}' on "
             f"collection '{self.collection_name}'."
         )
+
+
+def close_mongo_connection() -> None:
+    """Close MongoDB client gracefully on app shutdown."""
+    global client
+    if client is None:
+        return
+
+    try:
+        client.close()
+        print("MongoDB connection closed")
+    except Exception as e:
+        print(f"Warning: Could not close MongoDB connection cleanly: {e}")
+    finally:
+        client = None
 
 # ============================================
 # COLLECTIONS
@@ -458,9 +477,6 @@ def get_user_storage_used(user_id: str) -> float:
     total_bytes = sum(record.get("file_size", 0) for record in records)
     return total_bytes / (1024 * 1024)  # Convert to MB
 
-# ============================================
-# INITIALIZATION
-# ============================================
 
 # Create indexes on startup
 create_indexes()

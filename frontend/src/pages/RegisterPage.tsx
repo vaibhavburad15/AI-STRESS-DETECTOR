@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/api';
-import { User, Mail, Lock, Briefcase, FileCheck, ArrowRight, AlertCircle, CheckCircle, MapPin, Calendar, Users, Upload } from 'lucide-react';
+import { User, Mail, Lock, Briefcase, FileCheck, ArrowRight, AlertCircle, CheckCircle, MapPin, Calendar, Users, Upload, Phone } from 'lucide-react';
 import stressLogo from '../../assets/stress logo.png';
 
 const RegisterPage = () => {
@@ -23,6 +23,8 @@ const RegisterPage = () => {
     licenseNumber: '',
     stateMedicalCouncil: '',
     specialization: '',
+    // SMS
+    phone_number: '',
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -88,6 +90,12 @@ const RegisterPage = () => {
       return;
     }
 
+    // Phone number validation (optional but must be valid if provided)
+    if (formData.phone_number && !/^\+[1-9]\d{6,14}$/.test(formData.phone_number.trim())) {
+      setError('Phone number must be in international format e.g. +919876543210');
+      return;
+    }
+
     // User-specific validation
     if (userType === 'user') {
       if (!formData.age || parseInt(formData.age) < 13 || parseInt(formData.age) > 120) {
@@ -124,7 +132,8 @@ const RegisterPage = () => {
           parseInt(formData.age),
           formData.gender,
           formData.location,
-          formData.hasPreviousStressIssues
+          formData.hasPreviousStressIssues,
+          formData.phone_number.trim() || undefined
         );
         
         // Upload medical document if provided
@@ -140,7 +149,8 @@ const RegisterPage = () => {
           formData.licenseNumber,
           formData.stateMedicalCouncil,
           formData.specialization,
-          ['Mon 9:00-10:00', 'Wed 14:00-15:00', 'Fri 11:00-12:00']
+          ['Mon 9:00-10:00', 'Wed 14:00-15:00', 'Fri 11:00-12:00'],
+          formData.phone_number.trim() || undefined
         );
       }
 
@@ -174,9 +184,10 @@ const RegisterPage = () => {
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Registration Successful!</h2>
           <p className="text-gray-600 mb-4">
             We've sent a verification code to <strong>{formData.email}</strong>
+            {formData.phone_number && <> and an SMS message to <strong>{formData.phone_number}</strong></>}
           </p>
           <p className="text-sm text-gray-500">
-            Please check your email for the 6-digit verification code.
+            Please check your email (and SMS if provided) for the 6-digit verification code.
           </p>
           <p className="text-sm text-gray-500 mt-2">
             Redirecting to verification page...
@@ -317,6 +328,28 @@ const RegisterPage = () => {
                   />
                 </div>
               </div>
+            </div>
+
+            {/* SMS Phone Number — shown for both user and doctor */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                SMS Phone Number <span className="text-gray-400 font-normal">(Optional)</span>
+              </label>
+              <div className="relative">
+                <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="tel"
+                  name="phone_number"
+                  value={formData.phone_number}
+                  onChange={handleChange}
+                  className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all outline-none"
+                  placeholder="+919876543210"
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5 ml-1 flex items-center gap-1">
+                <span className="text-green-600">💬</span>
+                Include country code (e.g. +91 for India). Used to send appointment updates &amp; stress results via SMS.
+              </p>
             </div>
 
             {/* User-specific fields */}

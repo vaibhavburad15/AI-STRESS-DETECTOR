@@ -235,20 +235,31 @@ const MedicalRecordsManager: React.FC<Props> = ({ userId }) => {
 
   const handleDownload = async (record: MedicalRecord) => {
     try {
+      const isStressTest = record.is_linked_to_stress_test || record.record_type === 'stress_test';
+
       const response = await axios.get(
         `/api/medical-records/download/${record.id}`,
-        { responseType: 'blob', headers: authHeaders(userId) }
+        {
+          responseType: 'blob',
+          headers: authHeaders(userId)
+        }
       );
-      
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+
+      // Always use PDF for stress test records regardless of stored file_name
+      const blobType = isStressTest ? 'application/pdf' : (response.headers['content-type'] || 'application/octet-stream');
+      const fileName = isStressTest
+        ? `${record.record_name.replace(/\s+/g, '_')}.pdf`
+        : record.file_name;
+
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: blobType }));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', record.file_name);
+      link.setAttribute('download', fileName);
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
-      
+
       fetchRecords(); // Refresh to update download count
     } catch (error) {
       alert('Failed to download file');

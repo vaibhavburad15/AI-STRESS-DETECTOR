@@ -16,6 +16,7 @@ from ml_model.predictor import predictor
 from ..recommendation_engine import enhanced_engine
 from ..progress_tracker import ProgressTracker
 from ..email_service import email_service
+from ..sms_service import sms_service
 from ..nmc_verification import build_nmc_profile
 router = APIRouter(prefix="/api/user", tags=["User"])
 
@@ -111,6 +112,20 @@ async def submit_test(test: TestSubmission, current_user: dict = Depends(require
         {"$push": {"test_history": test_id}}
     )
     
+    # ✅ SEND SMS STRESS RESULT
+    try:
+        submitting_user = users_collection.find_one({"_id": ObjectId(test.user_id)})
+        if submitting_user and submitting_user.get("phone_number"):
+            sms_service.send_stress_result_sms(
+                phone=submitting_user["phone_number"],
+                user_name=submitting_user["name"],
+                stress_label=stress_label,
+                confidence=confidence,
+                top_recommendations=recommendations[:3] if recommendations else []
+            )
+    except Exception as e:
+        print(f"⚠️ Failed to send stress result SMS: {e}")
+
     return {
         "id": test_id,
         "user_id": test.user_id,
@@ -504,7 +519,7 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
     result = appointments_collection.insert_one(appointment_dict)
     appointment_id = str(result.inserted_id)
     
-    # ✅ SEND EMAIL TO USER
+    # ✅ SEND EMAIL + SMS TO USER
     try:
         email_service.send_appointment_booked_email(
             user_email=user["email"],
@@ -516,7 +531,19 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
         print(f"✅ Appointment booking email sent to {user['email']}")
     except Exception as e:
         print(f"⚠️ Failed to send booking email: {e}")
-        # Don't fail the request if email fails
+
+    try:
+        if user.get("phone_number"):
+            sms_service.send_appointment_booked_sms(
+                phone=user["phone_number"],
+                user_name=user["name"],
+                doctor_name=doctor["name"],
+                appointment_time=appointment.time_slot,
+                notes=appointment.notes or ""
+            )
+    except Exception as e:
+        print(f"⚠️ Failed to send booking SMS: {e}")
+        # Don't fail the request if SMS fails
     
     return {
         "id": appointment_id,

@@ -7,7 +7,7 @@ Action: REPLACE your existing backend/app/main.py with this entire file
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import auth_routes, user_routes, doctor_routes, admin_routes
-from app.database import init_admin
+from app.database import init_admin, close_mongo_connection
 import os
 from pathlib import Path
 
@@ -57,6 +57,11 @@ async def startup_event():
     upload_dir = Path("uploads/medical_records")
     upload_dir.mkdir(parents=True, exist_ok=True)
     print(f"📁 Upload directory ready: {upload_dir}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close resources on shutdown."""
+    close_mongo_connection()
 
 @app.get("/")
 async def root():

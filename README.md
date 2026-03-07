@@ -93,6 +93,20 @@ uvicorn app.main:app --reload
 
 Backend will run on: **http://localhost:8000**
 
+### 2.1 Optional SMS Notifications (Fast2SMS)
+
+To enable OTP and appointment updates via Fast2SMS, add these values in `backend/.env`:
+
+```env
+SMS_PROVIDER=fast2sms
+FAST2SMS_API_KEY=your_fast2sms_api_key
+FAST2SMS_ROUTE=q
+FAST2SMS_LANGUAGE=english
+FAST2SMS_COUNTRY_CODE=91
+```
+
+If these values are not set, SMS sending stays disabled and core app flows still work.
+
 ### 3. Frontend Setup
 
 ```bash

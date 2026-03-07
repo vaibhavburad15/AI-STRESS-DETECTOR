@@ -17,6 +17,7 @@ from ..models import AppointmentUpdate
 from ..database import appointments_collection, tests_collection, users_collection
 from ..auth import require_role
 from ..email_service import email_service
+from ..sms_service import sms_service
 
 router = APIRouter(prefix="/api/doctor", tags=["Doctor"])
 
@@ -29,6 +30,20 @@ def _build_email_context(appointment: Mapping[str, Any]) -> tuple[str | None, st
     doctor_name = str(appointment.get("doctor_name") or "Doctor")
     time_slot = str(appointment.get("time_slot") or "Scheduled time")
     return user_email, user_name, doctor_name, time_slot
+
+def _get_user_phone(appointment: Mapping[str, Any]) -> str | None:
+    """Fetch phone_number from users_collection for a given appointment."""
+    try:
+        from bson import ObjectId as _ObjId
+        user_id = appointment.get("user_id")
+        if not user_id:
+            return None
+        user = users_collection.find_one({"_id": _ObjId(str(user_id))})
+        phone = user.get("phone_number") if user else None
+        return phone if isinstance(phone, str) and phone else None
+    except Exception as ex:
+        print(f"⚠️ Could not fetch user phone: {ex}")
+        return None
 
 @router.get("/appointments/{doctor_id}")
 async def get_doctor_appointments(doctor_id: str, current_user: dict = Depends(require_role(["doctor"]))):
@@ -222,8 +237,29 @@ async def update_appointment(
                 appointment_time=time_slot
             )
             print(f"📧 Completion email queued for {user_email}")
+
+    # ✅ SMS notifications (parallel to email)
+    user_phone = _get_user_phone(appointment)
+    if user_phone:
+        if update.status == "approved":
+            sms_service.send_appointment_approved_sms(
+                phone=user_phone, user_name=user_name,
+                doctor_name=doctor_name, appointment_time=time_slot
+            )
+        elif update.status == "rejected":
+            sms_service.send_appointment_rejected_sms(
+                phone=user_phone, user_name=user_name,
+                doctor_name=doctor_name, appointment_time=time_slot,
+                rejection_reason=update.notes or "Time slot no longer available"
+            )
+        elif update.status == "completed":
+            sms_service.send_appointment_completed_sms(
+                phone=user_phone, user_name=user_name,
+                doctor_name=doctor_name, appointment_time=time_slot
+            )
+        print(f"📱 SMS queued for {user_phone}")
     
-    # Return immediately (email sends in background)
+    # Return immediately (email/SMS sends in background)
     return {
         "message": f"Appointment status updated to {update.status}",
         "appointment_id": appointment_id,
@@ -298,8 +334,29 @@ async def update_appointment_status(
                 appointment_time=time_slot
             )
             print(f"📧 Completion email queued for {user_email}")
+
+    # ✅ SMS notifications (parallel to email)
+    user_phone = _get_user_phone(appointment)
+    if user_phone:
+        if update.status == "approved":
+            sms_service.send_appointment_approved_sms(
+                phone=user_phone, user_name=user_name,
+                doctor_name=doctor_name, appointment_time=time_slot
+            )
+        elif update.status == "rejected":
+            sms_service.send_appointment_rejected_sms(
+                phone=user_phone, user_name=user_name,
+                doctor_name=doctor_name, appointment_time=time_slot,
+                rejection_reason=update.notes or "Time slot no longer available"
+            )
+        elif update.status == "completed":
+            sms_service.send_appointment_completed_sms(
+                phone=user_phone, user_name=user_name,
+                doctor_name=doctor_name, appointment_time=time_slot
+            )
+        print(f"📱 SMS queued for {user_phone}")
     
-    # Return immediately (email sends in background)
+    # Return immediately (email/SMS sends in background)
     return {
         "message": f"Appointment status updated to {update.status}",
         "appointment_id": appointment_id,

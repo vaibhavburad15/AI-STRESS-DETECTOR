@@ -40,13 +40,21 @@ const AddTestToRecords: React.FC<Props> = ({
   const handleAddToRecords = async () => {
     try {
       setLoading(true);
-      await axios.post('/api/medical-records/link-stress-test', {
-        user_id: userId,
-        stress_test_id: testId,
-        add_to_medical_records: true,
-        record_name: recordName,
-        notes: notes
-      });
+      await axios.post(
+        '/api/medical-records/link-stress-test',
+        {
+          user_id: userId,
+          stress_test_id: testId,
+          add_to_medical_records: true,
+          record_name: recordName,
+          notes: notes
+        },
+        {
+          headers: {
+            'X-User-ID': userId
+          }
+        }
+      );
       
       setAdded(true);
       setShowModal(false);
