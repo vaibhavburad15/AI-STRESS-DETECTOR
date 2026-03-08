@@ -5,7 +5,8 @@ from typing import List
 from ..models import (
     TestSubmission, TestResponse, AppointmentCreate, AppointmentResponse,
     GetEnhancedRecommendationsRequest, RecommendationProgressCreate,
-    RecommendationProgressComplete, UserAchievementsResponse, ProgressUpdate
+    RecommendationProgressComplete, UserAchievementsResponse, ProgressUpdate,
+    ChatbotMessage, ChatbotResponse
 )
 from ..database import (
     users_collection, tests_collection, appointments_collection, doctors_collection,
@@ -18,10 +19,35 @@ from ..progress_tracker import ProgressTracker
 from ..email_service import email_service
 from ..sms_service import sms_service
 from ..nmc_verification import build_nmc_profile
+import logging
+import groq
+import os
 router = APIRouter(prefix="/api/user", tags=["User"])
 
 # Initialize progress tracker
 tracker = ProgressTracker(progress_collection)
+logger = logging.getLogger(__name__)
+
+DEFAULT_GROQ_CHAT_MODELS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant"
+]
+
+
+def _groq_model_candidates() -> List[str]:
+    """Build an ordered, de-duplicated list of Groq models to try."""
+    configured_primary = os.getenv("GROQ_CHAT_MODEL", "").strip()
+    configured_fallbacks = [
+        model.strip()
+        for model in os.getenv("GROQ_CHAT_FALLBACK_MODELS", "").split(",")
+        if model.strip()
+    ]
+
+    candidates: List[str] = []
+    for model_name in [configured_primary, *configured_fallbacks, *DEFAULT_GROQ_CHAT_MODELS]:
+        if model_name and model_name not in candidates:
+            candidates.append(model_name)
+    return candidates
 
 # ============================================
 # QUESTIONNAIRE
@@ -556,3 +582,125 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
         "notes": appointment.notes,
         "created_at": appointment_dict["created_at"]
     }
+
+# ============================================
+# CHATBOT
+# ============================================
+
+@router.post("/chatbot/chat", response_model=ChatbotResponse)
+async def chatbot_chat(chat_request: ChatbotMessage, current_user: dict = Depends(require_role(["user"]))):
+    """Chat with AI stress counselor that auto-detects stress levels"""
+    try:
+        # Initialize Groq client
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY environment variable not set")
+        
+        client = groq.Groq(api_key=api_key)
+        
+        # Always use the authenticated user id from the header.
+        # Ignore the body user_id to prevent cross-user data access.
+        user_id = current_user["user_id"]
+
+        # Get user's recent test history for context
+        recent_tests = list(tests_collection.find(
+            {"user_id": user_id}
+        ).sort("timestamp", -1).limit(3))
+        
+        context = ""
+        if recent_tests:
+            latest_test = recent_tests[0]
+            context = f"User's latest stress assessment: {latest_test.get('stress_label', 'Unknown')} stress level (score: {latest_test.get('stress_level', 'N/A')}) from {latest_test.get('timestamp', 'recently')}."
+        
+        # Prompt for Groq
+        system_prompt = f"""You are a compassionate AI stress counselor. Help users manage their stress through CBT principles and supportive conversation.
+
+{context}
+
+Guidelines:
+- Be empathetic and supportive
+- Use CBT techniques when appropriate
+- Suggest practical coping strategies
+- Encourage professional help for severe stress
+- Keep responses conversational but helpful
+
+After your response, provide a stress level assessment in this exact format:
+STRESS_LEVEL: [0-3] (0=Low, 1=Moderate, 2=High, 3=Severe)
+CONFIDENCE: [0.0-1.0]"""
+
+        # Call Groq API with model fallback (to handle model deprecations cleanly)
+        chat_completion = None
+        provider_error = None
+        for model_name in _groq_model_candidates():
+            try:
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": chat_request.message}
+                    ],
+                    model=model_name,
+                    temperature=0.7,
+                    max_tokens=1000
+                )
+                break
+            except Exception as model_error:
+                provider_error = model_error
+                logger.warning(f"Groq model attempt failed for {model_name}: {model_error}")
+
+        if chat_completion is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "No available Groq model for chatbot. "
+                    "Set GROQ_CHAT_MODEL to an active model."
+                )
+            ) from provider_error
+        
+        full_response = (chat_completion.choices[0].message.content or "").strip()
+        
+        # Parse the response
+        response_part = full_response
+        stress_level = None
+        stress_label = None
+        confidence = None
+        
+        # Look for stress level markers in the response
+        response_lower = full_response.lower()
+        
+        # Extract stress level
+        if "stress_level:" in response_lower:
+            try:
+                level_text = full_response.split("STRESS_LEVEL:")[1].split()[0].strip()
+                stress_level = int(level_text)
+                # Map level to label
+                labels = {0: "Low", 1: "Moderate", 2: "High", 3: "Severe"}
+                stress_label = labels.get(stress_level, "Unknown")
+            except:
+                pass
+        
+        # Extract confidence
+        if "confidence:" in response_lower:
+            try:
+                conf_text = full_response.split("CONFIDENCE:")[1].split()[0].strip()
+                confidence = float(conf_text)
+            except:
+                pass
+        
+        # Remove the stress assessment markers from the response
+        if "STRESS_LEVEL:" in full_response:
+            response_part = full_response.split("STRESS_LEVEL:")[0].strip()
+        if "CONFIDENCE:" in response_part:
+            response_part = response_part.split("CONFIDENCE:")[0].strip()
+        
+        return ChatbotResponse(
+            response=response_part,
+            detected_stress_level=stress_level,
+            detected_stress_label=stress_label,
+            confidence=confidence
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Unexpected chatbot error for user_id={current_user.get('user_id')}")
+        raise HTTPException(status_code=500, detail=f"Chatbot error: {str(e)}")

@@ -145,5 +145,14 @@ export const authService = {
   },
 };
 
+export const chatbotService = {
+  async sendMessage(userId: string, message: string): Promise<any> {
+    const { data } = await api.post('/api/user/chatbot/chat', {
+      user_id: userId,
+      message,
+    });
+    return data;
+  },
+};
 
 export default api;

@@ -398,11 +398,27 @@ class MedicalRecordStats(BaseModel):
     total_size_mb: float
     records_by_type: dict
     recent_uploads: int  # Last 30 days
-    stress_tests_linked: int
-    most_recent_upload: Optional[datetime]
-    storage_limit_mb: float
-    storage_used_mb: float
-    storage_percentage: float
+    stress_tests_linked: int = 0
+    most_recent_upload: Optional[datetime] = None
+    storage_limit_mb: float = 0.0
+    storage_used_mb: float = 0.0
+    storage_percentage: float = 0.0
+
+# ============================================
+# CHATBOT MODELS
+# ============================================
+
+class ChatbotMessage(BaseModel):
+    """Chatbot message request"""
+    user_id: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=1000)
+
+class ChatbotResponse(BaseModel):
+    """Chatbot response"""
+    response: str
+    detected_stress_level: Optional[int] = None  # 0=Low, 1=Moderate, 2=High, 3=Severe
+    detected_stress_label: Optional[str] = None
+    confidence: Optional[float] = None
 
 class RecordActivity(BaseModel):
     """Record activity log"""

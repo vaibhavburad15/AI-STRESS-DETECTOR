@@ -10,6 +10,10 @@ from app.routes import auth_routes, user_routes, doctor_routes, admin_routes
 from app.database import init_admin, close_mongo_connection
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Try to import medical records routes
 MEDICAL_RECORDS_ENABLED = False

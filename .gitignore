@@ -1,16 +1,48 @@
-# Python virtual environment
-myenv/
-
-# Python cache
-__pycache__/
-*.pyc
-
-# Environment variables
-.env
-
-# Node modules
-node_modules/
-
-# OS files
+# OS / editor
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+*.egg-info/
+pip-wheel-metadata/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+myenv/
+stress/
+
+# Environment variables and secrets
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Node / frontend
+node_modules/
+frontend/dist/
+dist/
+build/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

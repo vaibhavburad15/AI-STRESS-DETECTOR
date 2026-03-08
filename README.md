@@ -10,6 +10,7 @@ A comprehensive full-stack web application for **AI-powered stress detection** u
 - User registration and login
 - **18-question CBT-based stress assessment**
 - **ML-powered stress level prediction** (Low/Moderate/High/Severe)
+- **24/7 AI Stress Counselor** with automatic stress detection
 - Personalized recommendations based on stress level
 - View test history with trend analysis
 - Book appointments with verified doctors
@@ -59,6 +60,7 @@ A comprehensive full-stack web application for **AI-powered stress detection** u
 - **4 stress levels**: Low (0), Moderate (1), High (2), Severe (3)
 - Confidence scoring for predictions
 - Model persistence with pickle
+- **AI Chatbot** with Groq's versatile model for real-time stress detection
 
 ## 📋 Prerequisites
 
@@ -184,6 +186,7 @@ Severe            1.00      0.88      0.94
 - `GET /api/user/doctors` - Get verified doctors
 - `POST /api/user/appointment/book` - Book appointment
 - `GET /api/user/appointments/{user_id}` - Get appointments
+- `POST /api/user/chatbot/chat` - Chat with AI counselor (auto-detects stress)
 
 ### Doctor
 - `GET /api/doctor/appointments/{doctor_id}` - Get appointments with patient data
@@ -231,6 +234,8 @@ The ML model is designed for continuous improvement:
 # Set environment variables
 MONGODB_URL=your_mongodb_atlas_url
 SECRET_KEY=your_strong_secret_key
+GROQ_API_KEY=your_groq_api_key
+GROQ_CHAT_MODEL=llama-3.3-70b-versatile
 ```
 
 ### Frontend (Vercel/Netlify)
