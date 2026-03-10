@@ -241,6 +241,21 @@ async def get_user_medical_records(
 ):
     """Get all medical records for a user with optional filters"""
     
+    # ✅ CRITICAL FIX: Add object-level authorization and validate user_id
+    try:
+        ObjectId(user_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
+    if current_user["role"] == "user" and current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own medical records"
+        )
+    
     # Build query
     query = {"user_id": user_id, "deleted": False}
     
@@ -272,7 +287,7 @@ async def get_user_medical_records(
             "record_name": record["record_name"],
             "record_type": record["record_type"],
             "file_name": record["file_name"],
-            "file_path": record["file_path"],
+            # ✅ FIX: Don't return file_path that leaks filesystem layout
             "file_size": record["file_size"],
             "file_format": record["file_format"],
             "description": record.get("description"),
@@ -295,12 +310,28 @@ async def get_medical_record(
     record_id: str,
     current_user: dict = Depends(require_role(["user", "doctor"]))
 ):
-    """Get a specific medical record"""
+    """Get a specific medical record - users can only access their own"""
+    
+    # ✅ CRITICAL FIX: Validate ID format
+    try:
+        ObjectId(record_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid record ID format"
+        )
     
     record = medical_records_collection.find_one({"_id": ObjectId(record_id), "deleted": False})
     
     if not record:
         raise HTTPException(status_code=404, detail="Medical record not found")
+    
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["role"] == "user" and current_user["user_id"] != record["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own medical records"
+        )
     
     return {
         "id": str(record["_id"]),
@@ -308,7 +339,7 @@ async def get_medical_record(
         "record_name": record["record_name"],
         "record_type": record["record_type"],
         "file_name": record["file_name"],
-        "file_path": record["file_path"],
+        # ✅ FIX: Don't return full file_path that leaks filesystem layout
         "file_size": record["file_size"],
         "file_format": record["file_format"],
         "description": record.get("description"),
@@ -334,12 +365,28 @@ async def update_medical_record(
     update: MedicalRecordUpdate,
     current_user: dict = Depends(require_role(["user"]))
 ):
-    """Update medical record metadata (not the file)"""
+    """Update medical record metadata (not the file) - users can only update their own"""
+    
+    # ✅ FIX: Validate ID format
+    try:
+        ObjectId(record_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid record ID format"
+        )
     
     record = medical_records_collection.find_one({"_id": ObjectId(record_id), "deleted": False})
     
     if not record:
         raise HTTPException(status_code=404, detail="Medical record not found")
+    
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != record["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only update your own medical records"
+        )
     
     # Build update dict - FIXED: Explicit typing to prevent type errors
     update_dict: dict[str, Any] = {"updated_at": datetime.utcnow()}

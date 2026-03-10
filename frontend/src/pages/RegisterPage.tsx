@@ -138,7 +138,7 @@ const RegisterPage = () => {
         
         // Upload medical document if provided
         if (formData.medicalDocument) {
-          await authService.uploadMedicalDocument(formData.email, formData.medicalDocument);
+          await authService.uploadMedicalDocument(formData.medicalDocument);
         }
       } else {
         // Register doctor

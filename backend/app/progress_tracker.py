@@ -389,10 +389,38 @@ class ProgressTracker:
     
     def _update_achievement_field(self, user_id: str, field: str, value: Any):
         """Update a specific achievement field"""
-        # This would update database
-        pass
+        # ✅ HIGH FIX: Actually update the database instead of placeholder
+        try:
+            self.progress_collection.update_one(
+                {"user_id": user_id},
+                {
+                    "$set": {
+                        field: value,
+                        "updated_at": datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to update achievement field {field}: {e}")
     
     def get_leaderboard(self, limit: int = 10) -> List[Dict]:
-        """Get top users by points (optional feature)"""
-        # Placeholder for future implementation
-        return []
+        """Get top users by points"""
+        # ✅ HIGH FIX: Actually query the database instead of returning empty list
+        try:
+            top_users = list(
+                self.progress_collection.find()
+                .sort("points", -1)
+                .limit(limit)
+            )
+            return [
+                {
+                    "user_id": user.get("user_id"),
+                    "points": user.get("points", 0),
+                    "level": self.calculate_level(user.get("points", 0))
+                }
+                for user in top_users
+            ]
+        except Exception as e:
+            print(f"⚠️ Failed to get leaderboard: {e}")
+            return []

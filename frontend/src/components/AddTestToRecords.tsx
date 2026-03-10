@@ -8,10 +8,9 @@
 
 import React, { useState } from 'react';
 import { FileText, Plus, Check, X } from 'lucide-react';
-import axios from 'axios';
+import api from '../services/api';
 
 interface Props {
-  userId: string;
   testId: string;
   stressLevel: number;
   stressLabel: string;
@@ -21,7 +20,6 @@ interface Props {
 }
 
 const AddTestToRecords: React.FC<Props> = ({
-  userId,
   testId,
   stressLevel,
   stressLabel,
@@ -40,19 +38,14 @@ const AddTestToRecords: React.FC<Props> = ({
   const handleAddToRecords = async () => {
     try {
       setLoading(true);
-      await axios.post(
+      // ✅ MEDIUM FIX: Use shared api client instead of raw axios
+      await api.post(
         '/api/medical-records/link-stress-test',
         {
-          user_id: userId,
           stress_test_id: testId,
           add_to_medical_records: true,
           record_name: recordName,
           notes: notes
-        },
-        {
-          headers: {
-            'X-User-ID': userId
-          }
         }
       );
       

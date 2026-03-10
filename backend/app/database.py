@@ -290,7 +290,7 @@ def create_indexes():
 # ============================================
 
 def init_admin():
-    """Initialize default admin user"""
+    """Initialize default admin user (password from environment variable)"""
     if db is None:
         print("⚠️ No database connection - skipping admin initialization")
         return
@@ -303,13 +303,21 @@ def init_admin():
         existing_admin = admin_collection.find_one({"username": "admin"})
         
         if not existing_admin:
+            # ✅ CRITICAL FIX: Load admin password from environment, not hardcoded
+            admin_password = os.getenv("ADMIN_PASSWORD")
+            if not admin_password:
+                print("⚠️ WARNING: ADMIN_PASSWORD not set in environment variables!")
+                print("⚠️ Create admin with secure password by setting ADMIN_PASSWORD env var")
+                return
+            
             admin_collection.insert_one({
                 "username": "admin",
                 "email": "admin@stressanalyzer.com",
-                "password": get_password_hash("admin123"),
+                "password": get_password_hash(admin_password),
                 "role": "admin"
             })
-            print("✅ Default admin created (username: admin, password: admin123)")
+            print("✅ Default admin created (email: admin@stressanalyzer.com)")
+            print("⚠️ IMPORTANT: Change the default admin password after first login!")
         
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize admin: {e}")

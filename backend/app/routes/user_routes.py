@@ -96,6 +96,9 @@ async def get_questionnaire():
 @router.post("/test/submit", response_model=TestResponse)
 async def submit_test(test: TestSubmission, current_user: dict = Depends(require_role(["user"]))):
     """Submit stress test and get ML-based prediction"""
+    # ✅ CRITICAL FIX: Use authenticated user_id, not client-provided
+    user_id = current_user["user_id"]
+    
     # Validate responses
     if len(test.responses) != 18:
         raise HTTPException(
@@ -118,9 +121,9 @@ async def submit_test(test: TestSubmission, current_user: dict = Depends(require
             detail=f"Prediction error: {str(e)}"
         )
     
-    # Save test result
+    # Save test result with authenticated user_id
     test_dict = {
-        "user_id": test.user_id,
+        "user_id": user_id,  # Use authenticated user, not test.user_id
         "responses": test.responses,
         "stress_level": int(stress_level),
         "stress_label": stress_label,
@@ -134,13 +137,13 @@ async def submit_test(test: TestSubmission, current_user: dict = Depends(require
     
     # Update user's test history
     users_collection.update_one(
-        {"_id": ObjectId(test.user_id)},
+        {"_id": ObjectId(user_id)},
         {"$push": {"test_history": test_id}}
     )
     
     # ✅ SEND SMS STRESS RESULT
     try:
-        submitting_user = users_collection.find_one({"_id": ObjectId(test.user_id)})
+        submitting_user = users_collection.find_one({"_id": ObjectId(user_id)})
         if submitting_user and submitting_user.get("phone_number"):
             sms_service.send_stress_result_sms(
                 phone=submitting_user["phone_number"],
@@ -154,7 +157,7 @@ async def submit_test(test: TestSubmission, current_user: dict = Depends(require
 
     return {
         "id": test_id,
-        "user_id": test.user_id,
+        "user_id": user_id,
         "responses": test.responses,
         "stress_level": int(stress_level),
         "stress_label": stress_label,
@@ -164,8 +167,25 @@ async def submit_test(test: TestSubmission, current_user: dict = Depends(require
     }
 
 @router.get("/test/history/{user_id}")
-async def get_test_history(user_id: str, current_user: dict = Depends(require_role(["user", "admin"]))):
-    """Get user's test history"""
+async def get_test_history(user_id: str, current_user: dict = Depends(require_role(["user", "admin", "doctor"]))):
+    """Get user's test history - users can only access their own, doctors/admins can access patients"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    # Only allow users to see their own history, admins/doctors can see all
+    if current_user["role"] == "user" and current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own test history"
+        )
+    
+    # Validate user_id is valid ObjectId
+    try:
+        ObjectId(user_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
     tests = list(tests_collection.find({"user_id": user_id}).sort("timestamp", -1))
     
     return [
@@ -181,11 +201,28 @@ async def get_test_history(user_id: str, current_user: dict = Depends(require_ro
 
 @router.get("/test/{test_id}")
 async def get_test_details(test_id: str, current_user: dict = Depends(require_role(["user", "doctor", "admin"]))):
-    """Get detailed test results"""
+    """Get detailed test results - users can only access their own tests"""
+    # ✅ CRITICAL FIX: Validate ID format and add object-level authorization
+    try:
+        ObjectId(test_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid test ID format"
+        )
+    
     test = tests_collection.find_one({"_id": ObjectId(test_id)})
     
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
+    
+    # Check authorization
+    test_user_id = test["user_id"]
+    if current_user["role"] == "user" and current_user["user_id"] != test_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own test results"
+        )
     
     return {
         "id": str(test["_id"]),
@@ -208,8 +245,21 @@ async def get_enhanced_recommendations(
     test_id: str,
     current_user: dict = Depends(require_role(["user"]))
 ):
-    """Get enhanced, personalized recommendations based on test results"""
+    """Get enhanced, personalized recommendations based on test results
+    
+    Expects: query parameter test_id
+    """
+    # ✅ FIX: Accept test_id as query parameter (contract fix)
     user_id = current_user.get('user_id') or current_user.get('id')
+    
+    # Validate test_id format
+    try:
+        ObjectId(test_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid test ID format"
+        )
     
     # Get user data
     user = users_collection.find_one({"_id": ObjectId(user_id)})
@@ -220,6 +270,13 @@ async def get_enhanced_recommendations(
     test = tests_collection.find_one({"_id": ObjectId(test_id)})
     if not test:
         raise HTTPException(status_code=404, detail="Test not found")
+    
+    # ✅ CRITICAL FIX: Add object-level authorization  
+    if test["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only get recommendations for your own tests"
+        )
     
     # Get test history for trend analysis
     test_history = list(tests_collection.find({"user_id": user_id}).sort("timestamp", -1).limit(10))
@@ -491,7 +548,23 @@ async def get_doctors(current_user: dict = Depends(require_role(["user"]))):
 
 @router.get("/appointments/{user_id}")
 async def get_user_appointments(user_id: str, current_user: dict = Depends(require_role(["user"]))):
-    """Get user's appointments"""
+    """Get user's appointments - users can only access their own"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own appointments"
+        )
+    
+    # Validate user_id format
+    try:
+        ObjectId(user_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid user ID format"
+        )
+    
     appointments = list(appointments_collection.find({"user_id": user_id}).sort("created_at", -1))
     
     return [
@@ -512,6 +585,18 @@ async def get_user_appointments(user_id: str, current_user: dict = Depends(requi
 @router.post("/appointment/book", response_model=AppointmentResponse)
 async def book_appointment(appointment: AppointmentCreate, current_user: dict = Depends(require_role(["user"]))):
     """Book an appointment with a doctor"""
+    # ✅ CRITICAL FIX: Use authenticated user_id, not client-provided
+    user_id = current_user["user_id"]
+    
+    # Validate doctor_id format
+    try:
+        ObjectId(appointment.doctor_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid doctor ID format"
+        )
+    
     # Verify doctor exists and is verified
     doctor = doctors_collection.find_one({"_id": ObjectId(appointment.doctor_id)})
     if not doctor:
@@ -520,18 +605,30 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
     if not doctor.get("is_verified", False):
         raise HTTPException(status_code=400, detail="Doctor is not verified")
     
+    # ✅ FIX: Check for double-booking - ensure slot isn't already booked
+    existing_booking = appointments_collection.find_one({
+        "doctor_id": appointment.doctor_id,
+        "time_slot": appointment.time_slot,
+        "status": {"$in": ["pending", "confirmed"]}
+    })
+    if existing_booking:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This time slot is already booked"
+        )
+    
     # Verify time slot is available
     if appointment.time_slot not in doctor.get("available_slots", []):
         raise HTTPException(status_code=400, detail="Time slot not available")
     
     # Get user info
-    user = users_collection.find_one({"_id": ObjectId(appointment.user_id)})
+    user = users_collection.find_one({"_id": ObjectId(user_id)})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     # Create appointment
     appointment_dict = {
-        "user_id": appointment.user_id,
+        "user_id": user_id,  # Use authenticated user, not appointment.user_id
         "user_name": user["name"],
         "user_email": user["email"],
         "doctor_id": appointment.doctor_id,

@@ -9,10 +9,10 @@ import {
   FileText, Image, File, X, Calendar,
   ExternalLink
 } from 'lucide-react';
-import axios from 'axios';
+import api, { medicalRecordsService } from '../services/api';
 
-// ✅ FIX: Backend uses X-User-ID header instead of JWT tokens
-const authHeaders = (userId: string) => ({ 'X-User-ID': userId });
+// ✅ MEDIUM FIX: Use shared API client instead of raw axios
+// This ensures JWT authentication is properly applied to all requests
 
 interface MedicalRecord {
   id: string;
@@ -20,7 +20,6 @@ interface MedicalRecord {
   record_name: string;
   record_type: string;
   file_name: string;
-  file_path: string;
   file_size: number;
   file_format: string;
   description?: string;
@@ -97,21 +96,15 @@ const MedicalRecordsManager: React.FC<Props> = ({ userId }) => {
   const fetchRecords = async () => {
     try {
       setLoading(true);
-      const params = new URLSearchParams();
-      if (filterType !== 'all') params.append('record_type', filterType);
-      if (searchQuery) params.append('search', searchQuery);
-      
-      const response = await axios.get(
-        `/api/medical-records/user/${userId}?${params.toString()}`,
-        { headers: authHeaders(userId) }
-      );
-      // Ensure we always set an array
-      setRecords(Array.isArray(response.data) ? response.data : []);
+      // ✅ FIX: Use shared medicalRecordsService with JWT auth
+      const data = await medicalRecordsService.getRecords(userId, {
+        record_type: filterType !== 'all' ? filterType : undefined,
+        search: searchQuery || undefined,
+      });
+      setRecords(Array.isArray(data) ? data : []);
     } catch (error: any) {
       console.error('Failed to fetch records:', error);
-      // Set empty array on error
       setRecords([]);
-      // Show error to user
       alert('Failed to load medical records: ' + (error.response?.data?.detail || error.message));
     } finally {
       setLoading(false);
@@ -120,13 +113,11 @@ const MedicalRecordsManager: React.FC<Props> = ({ userId }) => {
 
   const fetchStats = async () => {
     try {
-      const response = await axios.get(`/api/medical-records/stats/${userId}`, {
-        headers: authHeaders(userId)
-      });
-      setStats(response.data);
+      // ✅ FIX: Use shared medicalRecordsService with JWT auth
+      const data = await medicalRecordsService.getStats(userId);
+      setStats(data);
     } catch (error: any) {
       console.error('Failed to fetch stats:', error);
-      // Set default stats on error
       setStats({
         total_records: 0,
         total_size_mb: 0,
@@ -197,18 +188,19 @@ const MedicalRecordsManager: React.FC<Props> = ({ userId }) => {
 
     try {
       setLoading(true);
-      await axios.post('/api/medical-records/upload', formData, {
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round(
-            (progressEvent.loaded * 100) / (progressEvent.total || 1)
-          );
-          setUploadProgress(percentCompleted);
-        },
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          ...authHeaders(userId),   // ✅ X-User-ID header
-        }
-      });
+      // Use shared api client with JWT auth
+      const formDataToSend = new FormData();
+      formDataToSend.append('file', uploadForm.file);
+      formDataToSend.append('record_name', uploadForm.record_name);
+      formDataToSend.append('record_type', uploadForm.record_type);
+      if (uploadForm.description) formDataToSend.append('description', uploadForm.description);
+      if (uploadForm.record_date) formDataToSend.append('record_date', uploadForm.record_date);
+      if (uploadForm.doctor_name) formDataToSend.append('doctor_name', uploadForm.doctor_name);
+      if (uploadForm.hospital_name) formDataToSend.append('hospital_name', uploadForm.hospital_name);
+      if (uploadForm.notes) formDataToSend.append('notes', uploadForm.notes);
+      if (uploadForm.tags) formDataToSend.append('tags', uploadForm.tags);
+      
+      await medicalRecordsService.uploadRecord(formDataToSend);
       
       setShowUploadModal(false);
       setUploadForm({
@@ -237,21 +229,15 @@ const MedicalRecordsManager: React.FC<Props> = ({ userId }) => {
     try {
       const isStressTest = record.is_linked_to_stress_test || record.record_type === 'stress_test';
 
-      const response = await axios.get(
-        `/api/medical-records/download/${record.id}`,
-        {
-          responseType: 'blob',
-          headers: authHeaders(userId)
-        }
-      );
+      const blob = await medicalRecordsService.downloadRecord(record.id);
 
       // Always use PDF for stress test records regardless of stored file_name
-      const blobType = isStressTest ? 'application/pdf' : (response.headers['content-type'] || 'application/octet-stream');
+      const blobType = isStressTest ? 'application/pdf' : 'application/octet-stream';
       const fileName = isStressTest
         ? `${record.record_name.replace(/\s+/g, '_')}.pdf`
         : record.file_name;
 
-      const url = window.URL.createObjectURL(new Blob([response.data], { type: blobType }));
+      const url = window.URL.createObjectURL(new Blob([blob], { type: blobType }));
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute('download', fileName);
@@ -273,10 +259,11 @@ const MedicalRecordsManager: React.FC<Props> = ({ userId }) => {
     }
 
     try {
-      const response = await axios.post(
+      // Use api client directly for bulk download
+      const response = await api.post(
         '/api/medical-records/download/bulk',
         { user_id: userId, record_ids: Array.from(selectedRecords) },
-        { responseType: 'blob', headers: authHeaders(userId) }
+        { responseType: 'blob' }
       );
       
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -300,9 +287,7 @@ const MedicalRecordsManager: React.FC<Props> = ({ userId }) => {
     }
 
     try {
-      await axios.delete(`/api/medical-records/${recordId}`, {
-        headers: authHeaders(userId)
-      });
+      await medicalRecordsService.deleteRecord(recordId);
       fetchRecords();
       fetchStats();
       alert('Record deleted successfully');

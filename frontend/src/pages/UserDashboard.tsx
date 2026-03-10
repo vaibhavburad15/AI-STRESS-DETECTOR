@@ -198,6 +198,11 @@ const UserDashboard = () => {
   };
 
   const handleSubmitTest = async (finalResponses: number[] = responses) => {
+    // ✅ LOW FIX: Prevent duplicate submissions by checking submitting flag
+    if (submitting) {
+      return; // Already submitting, prevent duplicate
+    }
+    
     if (finalResponses.some((r) => r === 0)) {
       alert('Please answer all questions');
       return;
@@ -206,7 +211,6 @@ const UserDashboard = () => {
     setSubmitting(true);
     try {
       const { data } = await api.post('/api/user/test/submit', {
-        user_id: user?.id,
         responses: finalResponses,
       });
       setTestResult(data);
@@ -222,7 +226,7 @@ const UserDashboard = () => {
   const handleBookAppointment = async (doctorId: string, timeSlot: string) => {
     try {
       await api.post('/api/user/appointment/book', {
-        user_id: user?.id,
+        // ✅ FIX: Don't send user_id from client, use authenticated user
         doctor_id: doctorId,
         time_slot: timeSlot,
       });
@@ -607,7 +611,6 @@ const UserDashboard = () => {
               </div>
               <div className="mb-5">
                 <AddTestToRecords
-                  userId={user?.id || ''}
                   testId={testResult.id}
                   stressLevel={testResult.stress_level}
                   stressLabel={testResult.stress_label}

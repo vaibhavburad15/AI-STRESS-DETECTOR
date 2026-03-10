@@ -120,6 +120,8 @@ class AppointmentUpdate(BaseModel):
 
 class TokenResponse(BaseModel):
     user: dict
+    access_token: str
+    token_type: str = "bearer"
     message: Optional[str] = None
 
 class OTPVerify(BaseModel):

@@ -68,27 +68,44 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ userId }
   };
 
   const formatSlot = (slot: string) => {
-    // Convert "2024-02-20 14:00" to "Feb 20, 2:00 PM"
-    const date = new Date(slot);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
+    // ✅ MEDIUM FIX: Handle both ISO format and informal format
+    // Try to parse as ISO first
+    const isoDate = new Date(slot);
+    
+    // If it's a valid ISO date
+    if (!isNaN(isoDate.getTime())) {
+      return isoDate.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    }
+    
+    // If it's already in informal format (e.g., "Mon 9:00-10:00"), return as-is
+    return slot;
   };
 
   const groupSlotsByDate = (slots: string[]) => {
     const grouped: { [key: string]: string[] } = {};
     
     slots.forEach(slot => {
-      const date = new Date(slot);
-      const dateKey = date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      });
+      // Try to parse as ISO, fall back to informal format
+      const isoDate = new Date(slot);
+      let dateKey: string;
+      
+      if (!isNaN(isoDate.getTime())) {
+        dateKey = isoDate.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        });
+      } else {
+        // For informal slots like "Mon 9:00-10:00", group by day
+        const dayPart = slot.split(' ')[0];
+        dateKey = `${dayPart} (recurring)`;
+      }
       
       if (!grouped[dateKey]) {
         grouped[dateKey] = [];

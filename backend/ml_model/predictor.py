@@ -98,15 +98,24 @@ class StressPredictor:
                 "🛑 Take a break from stressful activities if possible."
             ]
         
-        # Add specific recommendations based on high-scoring questions
-        if responses[7] >= 4:  # Sleep issues (q8)
+        # ✅ MEDIUM FIX: Align question mapping with questionnaire in user_routes.py
+        # Index mapping (0-based):
+        # 5: "How often do you have trouble falling or staying asleep?" (physical)
+        # 2: "How often do you feel irritable or angry?" (emotional)
+        # 12: "How often have you experienced changes in appetite?" (behavioral)
+        # 12: "How often do you avoid social interactions?" (behavioral)
+        
+        if responses[5] >= 4:  # Sleep issues (q6 - index 5)
             recommendations.append("💤 Focus on improving sleep hygiene - maintain regular sleep schedule.")
         
-        if responses[2] >= 4:  # Anxiety (q3)
-            recommendations.append("🫁 Practice deep breathing exercises (4-7-8 technique).")
+        if responses[2] >= 4:  # Irritability/Anger (q3 - index 2)
+            recommendations.append("🧘 Practice relaxation techniques when you feel irritable or angry.")
         
-        if responses[14] >= 4:  # Social withdrawal (q15)
+        if responses[12] >= 4:  # Avoiding social interactions (q13 - index 12)
             recommendations.append("👥 Try to maintain social connections, even briefly.")
+        
+        if responses[15] >= 4:  # Work/study stress (q16 - index 15)
+            recommendations.append("⚖️ Review your work-life balance and set healthy boundaries.")
         
         return recommendations
     

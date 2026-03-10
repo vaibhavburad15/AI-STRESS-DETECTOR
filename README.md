@@ -125,25 +125,35 @@ Frontend will run on: **http://localhost:3000**
 
 ## 🗄️ Database Configuration
 
-The application connects to MongoDB at:
+The application connects to MongoDB at (configurable via `MONGODB_URL` env var):
 ```
-mongodb://localhost:27017/ai%20stress%20detector
+mongodb://localhost:27017/aistressdetector
 ```
 
 ### Collections Created Automatically:
 - `users` - User accounts
-- `doctors` - Doctor accounts
+- `doctors` - Doctor accounts  
+- `admins` - Admin accounts
 - `tests` - Stress test results
 - `appointments` - Doctor appointments
-- `admin` - Admin accounts
+- `medical_records` - User medical documents
+- `achievements` - User gamification data
 
-### Default Admin Credentials:
-```
-Username: admin
-Password: admin123
+### Default Admin Setup:
+⚠️ **IMPORTANT**: The default admin password must be set via environment variable:
+
+```bash
+# In backend/.env
+ADMIN_PASSWORD=your_secure_admin_password_here
 ```
 
-⚠️ **Change this in production!**
+When the backend starts, it creates an admin user if one doesn't exist:
+```
+Email: admin@stressanalyzer.com
+Password: (from ADMIN_PASSWORD env var)
+```
+
+**Change the default admin password after first login in production!**
 
 ## 📊 ML Model Details
 
@@ -249,20 +259,27 @@ VITE_API_URL=your_backend_url
 ### Sample Test Credentials
 
 **User:**
-- Register a new user account
-- Take the stress test
-- Book appointments
+- Email: user@example.com (register a new account)
+- Password: your_secure_password
+- Complete email verification to access dashboard
 
 **Doctor:**
-- Name: Dr. John Smith
-- Email: doctor@example.com
-- Password: doctor123
-- License: MD123456
+- Email: doctor@example.com (register a new account)  
+- License Number: MD123456
 - Specialization: Clinical Psychology
+- NMC verification required
+- Admin approval needed to activate account
 
 **Admin:**
-- Username: admin
-- Password: admin123
+- Email: admin@stressanalyzer.com
+- Password: (set via ADMIN_PASSWORD env var)
+- Can only be created by system administrator
+
+### Authentication Flow
+- Users register → verify email via OTP → login receives JWT token
+- JWT token valid for 24 hours (configurable)
+- All API requests require `Authorization: Bearer <token>` header
+- Tokens stored securely in localStorage (frontend)
 
 ## 📊 Stress Level Recommendations
 

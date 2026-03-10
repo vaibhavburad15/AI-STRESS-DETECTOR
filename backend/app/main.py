@@ -31,11 +31,13 @@ app = FastAPI(
 )
 
 # CORS configuration
+# ✅ FIX: Add env variable for frontend URL, restrict CORS in production
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual frontend URL
+    allow_origins=allowed_origins,  # Specify actual frontend URL(s)
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -55,7 +57,8 @@ async def startup_event():
     """Initialize database on startup"""
     init_admin()
     print("🚀 Server started successfully!")
-    print("📊 Admin credentials: username='admin', password='admin123'")
+    # ✅ CRITICAL FIX: Don't print hardcoded admin credentials
+    # Admin password should be set via environment variable or secure admin creation flow
     
     # Create uploads directory if it doesn't exist (NEW)
     upload_dir = Path("uploads/medical_records")
@@ -84,9 +87,21 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - verifies database connectivity"""
+    # ✅ FIX: Actually check database health, not just return "healthy"
+    try:
+        from app.database import client
+        if client is not None:
+            client.admin.command('ping')
+            db_status = "connected"
+        else:
+            db_status = "unavailable"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "connected" else "degraded",
+        "database": db_status,
         "medical_records": MEDICAL_RECORDS_ENABLED
     }
 
