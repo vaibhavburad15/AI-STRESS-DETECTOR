@@ -1,20 +1,32 @@
 """
 Authentication utilities - JWT-based authentication.
-Provides secure JW token creation, validation, and role-based access control.
+Provides secure JWT token creation, validation, and role-based access control.
 """
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
 import bcrypt
 import jwt
-import os
-from fastapi import Header, HTTPException, status, Depends
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
-from .database import users_collection, doctors_collection, admin_collection
 from bson import ObjectId
+from dotenv import load_dotenv
+from fastapi import Header, HTTPException, status, Depends
+
+from .database import users_collection, doctors_collection, admin_collection
+
+# Load backend/.env even when auth is imported before app.main.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # JWT Configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY") or os.getenv("SECRET_KEY")
+if not JWT_SECRET_KEY:
+    raise ValueError(
+        "JWT_SECRET_KEY environment variable is required for security "
+        "(legacy SECRET_KEY is also accepted)."
+    )
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM") or os.getenv("ALGORITHM", "HS256")
+JWT_EXPIRATION_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password against hash"""
@@ -34,7 +46,7 @@ def create_access_token(user_id: str, role: str, email: str) -> str:
         "user_id": user_id,
         "role": role,
         "email": email,
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
+        "exp": datetime.utcnow() + timedelta(minutes=JWT_EXPIRATION_MINUTES),
         "iat": datetime.utcnow()
     }
     token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)

@@ -296,6 +296,7 @@ async def verify_email_with_otp(request: OTPVerify):
 @router.post("/resend-otp")
 async def resend_otp(request: ResendOTPRequest):
     """Resend OTP to email"""
+    # ✅ LOW/MEDIUM FIX: Prevent email enumeration by always returning same response
     
     # Check in users collection
     user = users_collection.find_one({"email": request.email})
@@ -306,25 +307,16 @@ async def resend_otp(request: ResendOTPRequest):
         user = doctors_collection.find_one({"email": request.email})
         user_type = "doctor"
     
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email not found"
-        )
+    # Always return same response regardless of whether email exists or is verified
+    # This prevents attackers from enumerating valid email addresses
+    if user and not user.get("email_verified", False):
+        # Generate new OTP and send email
+        otp = generate_otp()
+        store_otp(request.email, otp, user_type)
+        email_service.send_otp_email(request.email, otp, user_type)
     
-    # Check if already verified
-    if user.get("email_verified", False):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already verified"
-        )
-    
-    # Generate new OTP and send email
-    otp = generate_otp()
-    store_otp(request.email, otp, user_type)
-    email_service.send_otp_email(request.email, otp, user_type)
-    
-    return {"message": "New verification code sent! Please check your email."}
+    # Always give same response to avoid enumeration
+    return {"message": "If this email is registered and not yet verified, check your email for the verification code."}
 
 @router.post("/upload-medical-document")
 async def upload_medical_document(
@@ -415,6 +407,13 @@ async def login(credentials: UserLogin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Please verify your email before logging in. Check your inbox for the verification code."
+        )
+    
+    # ✅ HIGH FIX: Check if doctor is approved by admin before allowing login
+    if role == "doctor" and not user.get("is_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is awaiting admin approval. Please check back later."
         )
     
     if not role:

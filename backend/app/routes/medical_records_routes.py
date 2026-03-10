@@ -114,11 +114,12 @@ async def upload_medical_record(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Upload a medical record"""
-    
-    # Verify user
-    user = users_collection.find_one({"_id": ObjectId(user_id)})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # ✅ CRITICAL FIX: Verify authenticated user matches user_id
+    if current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only upload records for yourself"
+        )
     
     # Check storage limit
     storage_used = get_user_storage_used(user_id)
@@ -465,6 +466,13 @@ async def delete_medical_record(
     if not record:
         raise HTTPException(status_code=404, detail="Medical record not found")
     
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != record["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only delete your own medical records"
+        )
+    
     if permanent:
         # Permanent delete - remove file and database record
         try:
@@ -736,6 +744,13 @@ async def download_medical_record(
 
     if not record:
         raise HTTPException(status_code=404, detail="Medical record not found")
+    
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["role"] == "user" and current_user["user_id"] != record["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only download your own medical records"
+        )
 
     # ── Stress test: generate PDF regardless of how it was stored ─
     is_stress = (
@@ -825,6 +840,12 @@ async def download_bulk_medical_records(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Download multiple medical records as a ZIP file"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != request.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only download your own medical records"
+        )
     
     # Get all records
     records = list(medical_records_collection.find({
@@ -873,9 +894,11 @@ async def link_stress_test_to_medical_record(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Add a stress test to medical records"""
+    # ✅ CRITICAL FIX: Use authenticated user_id, not client-provided
+    user_id = current_user["user_id"]
     
     # Get stress test
-    stress_test = tests_collection.find_one({"_id": ObjectId(test_add.stress_test_id)})
+    stress_test = tests_collection.find_one({"_id": ObjectId(test_add.stress_test_id), "user_id": user_id})
     
     if not stress_test:
         raise HTTPException(status_code=404, detail="Stress test not found")
@@ -889,7 +912,7 @@ async def link_stress_test_to_medical_record(
     
     # Create medical record entry
     record_dict = {
-        "user_id": test_add.user_id,
+        "user_id": user_id,
         "record_name": record_name,
         "record_type": "stress_test",
         "file_name": f"stress_test_{test_add.stress_test_id}.json",
@@ -940,6 +963,12 @@ async def get_medical_records_stats(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Get medical records statistics for a user"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only view your own statistics"
+        )
     
     records = list(medical_records_collection.find({"user_id": user_id, "deleted": False}))
     

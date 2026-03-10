@@ -219,7 +219,7 @@ def create_indexes():
         progress_collection.create_index([
             ("user_id", ASCENDING),
             ("recommendation_id", ASCENDING)
-        ], background=True)
+        ], unique=True, background=True)
         progress_collection.create_index([("user_id", ASCENDING)], background=True)
         progress_collection.create_index([("status", ASCENDING)], background=True)
         progress_collection.create_index([("started_at", DESCENDING)], background=True)

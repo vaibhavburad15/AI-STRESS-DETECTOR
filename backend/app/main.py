@@ -1,19 +1,19 @@
 """
-FIXED main.py file
-Location: backend/app/main.py
-Action: REPLACE your existing backend/app/main.py with this entire file
+Application entry point.
 """
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth_routes, user_routes, doctor_routes, admin_routes
-from app.database import init_admin, close_mongo_connection
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+# Load environment variables before importing modules that read them at import time.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+from app.database import init_admin, close_mongo_connection
+from app.routes import auth_routes, user_routes, doctor_routes, admin_routes
 
 # Try to import medical records routes
 MEDICAL_RECORDS_ENABLED = False

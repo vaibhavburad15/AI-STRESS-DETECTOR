@@ -320,6 +320,12 @@ async def start_recommendation(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Mark a recommendation as started"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != progress.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own recommendations"
+        )
     try:
         result = tracker.mark_started(
             user_id=progress.user_id,
@@ -341,6 +347,12 @@ async def complete_recommendation(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Mark a recommendation as completed and award points/badges"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != progress.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own recommendations"
+        )
     try:
         result = tracker.mark_completed(
             user_id=progress.user_id,
@@ -364,6 +376,12 @@ async def dismiss_recommendation(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Dismiss a recommendation as not helpful"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own recommendations"
+        )
     try:
         progress_collection.update_one(
             {"user_id": user_id, "recommendation_id": recommendation_id},
@@ -383,6 +401,12 @@ async def save_for_later(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Save a recommendation for later"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own recommendations"
+        )
     try:
         progress_collection.update_one(
             {"user_id": user_id, "recommendation_id": recommendation_id},
@@ -406,6 +430,12 @@ async def get_achievements(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Get user achievements, badges, points, and level"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own achievements"
+        )
     try:
         # Get or create achievements
         achievements = achievements_collection.find_one({"user_id": user_id})
@@ -463,6 +493,12 @@ async def get_user_progress(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Get user's recommendation progress"""
+    # ✅ CRITICAL FIX: Add object-level authorization
+    if current_user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own progress"
+        )
     try:
         progress_items = list(progress_collection.find({"user_id": user_id}))
         
@@ -605,11 +641,11 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
     if not doctor.get("is_verified", False):
         raise HTTPException(status_code=400, detail="Doctor is not verified")
     
-    # ✅ FIX: Check for double-booking - ensure slot isn't already booked
+    # ✅ FIX: Check for double-booking - ensure slot isn't already booked with correct statuses
     existing_booking = appointments_collection.find_one({
         "doctor_id": appointment.doctor_id,
         "time_slot": appointment.time_slot,
-        "status": {"$in": ["pending", "confirmed"]}
+        "status": {"$in": ["pending", "approved", "confirmed"]}
     })
     if existing_booking:
         raise HTTPException(
@@ -670,7 +706,7 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
     
     return {
         "id": appointment_id,
-        "user_id": appointment.user_id,
+        "user_id": user_id,
         "user_name": user["name"],
         "doctor_id": appointment.doctor_id,
         "doctor_name": doctor["name"],

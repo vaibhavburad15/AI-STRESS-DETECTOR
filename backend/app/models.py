@@ -76,7 +76,6 @@ class DoctorResponse(BaseModel):
 # ============================================
 
 class TestSubmission(BaseModel):
-    user_id: str
     responses: List[int]
 
 class TestResponse(BaseModel):
@@ -94,7 +93,6 @@ class TestResponse(BaseModel):
 # ============================================
 
 class AppointmentCreate(BaseModel):
-    user_id: str
     doctor_id: str
     time_slot: str
     notes: Optional[str] = ""
@@ -306,7 +304,7 @@ class MedicalRecordResponse(BaseModel):
     record_name: str
     record_type: str
     file_name: str
-    file_path: str
+    file_path: Optional[str] = None
     file_size: int
     file_format: str
     description: Optional[str]
@@ -346,7 +344,6 @@ class MedicalRecordFilter(BaseModel):
 
 class TestResultAdd(BaseModel):
     """Add test result to medical record"""
-    user_id: str
     stress_test_id: str  # ID of the stress test from tests_collection
     add_to_medical_records: bool = True
     record_name: Optional[str] = None  # Custom name, defaults to "Stress Test - {date}"

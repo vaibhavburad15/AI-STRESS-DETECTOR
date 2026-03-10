@@ -1,129 +1,141 @@
-import pickle
 import os
-import numpy as np
+import pickle
 from typing import List, Tuple
+
+import numpy as np
+
 
 class StressPredictor:
     def __init__(self):
         self.model = None
+        self.model_path = os.path.join(os.path.dirname(__file__), "stress_model.pkl")
         self.stress_labels = {
             0: "Low",
             1: "Moderate",
             2: "High",
-            3: "Severe"
+            3: "Severe",
         }
         self.load_model()
-    
+
     def load_model(self):
-        """Load the trained model"""
-        model_path = os.path.join(os.path.dirname(__file__), 'stress_model.pkl')
-        if os.path.exists(model_path):
-            with open(model_path, 'rb') as f:
-                self.model = pickle.load(f)
-            print("✅ ML Model loaded successfully")
-        else:
-            print("⚠️ Model not found. Please train the model first.")
-    
+        """Load the trained model, retraining automatically if the pickle is invalid."""
+        if not os.path.exists(self.model_path):
+            print("ML model file not found. Training a new model.")
+            self._retrain_model()
+            return
+
+        try:
+            with open(self.model_path, "rb") as file:
+                self.model = pickle.load(file)
+            print("ML model loaded successfully")
+        except Exception as exc:
+            print(f"Failed to load ML model from {self.model_path}: {exc}")
+            print("Attempting to retrain and replace the invalid model file.")
+            self._retrain_model()
+
+    def _retrain_model(self):
+        """Retrain the model from the training dataset and persist a fresh pickle."""
+        from .train_model import train_stress_model
+
+        self.model = train_stress_model()
+
     def predict(self, responses: List[int]) -> Tuple[int, str, float, List[str]]:
         """
-        Predict stress level from questionnaire responses
-        
+        Predict stress level from questionnaire responses.
+
         Args:
             responses: List of 18 integers (1-5)
-        
+
         Returns:
             Tuple of (stress_level, stress_label, confidence, recommendations)
         """
         if self.model is None:
             raise Exception("Model not loaded. Please train the model first.")
-        
+
         if len(responses) != 18:
             raise ValueError(f"Expected 18 responses, got {len(responses)}")
-        
-        # Validate responses
+
         if not all(1 <= r <= 5 for r in responses):
             raise ValueError("All responses must be between 1 and 5")
-        
-        # Prepare input
+
         X = np.array(responses).reshape(1, -1)
-        
-        # Predict
-        prediction = self.model.predict(X)[0]
+
+        prediction = int(self.model.predict(X)[0])
         probabilities = self.model.predict_proba(X)[0]
         confidence = float(probabilities[prediction])
-        
+
         stress_label = self.stress_labels[prediction]
         recommendations = self.get_recommendations(prediction, responses)
-        
+
         return prediction, stress_label, confidence, recommendations
-    
+
     def get_recommendations(self, stress_level: int, responses: List[int]) -> List[str]:
-        """Generate personalized recommendations based on stress level"""
-        recommendations = []
-        
-        if stress_level == 0:  # Low
+        """Generate personalized recommendations based on stress level."""
+        if stress_level == 0:
             recommendations = [
-                "✅ Your stress levels are well managed. Continue your current self-care practices.",
-                "💪 Maintain regular exercise and healthy eating habits.",
-                "😊 Keep engaging in activities you enjoy.",
-                "🧘 Consider preventive stress management techniques like meditation."
+                "Your stress levels appear well managed. Keep your current self-care routine.",
+                "Maintain regular exercise and healthy eating habits.",
+                "Keep spending time on activities you enjoy.",
+                "Use preventive stress-management techniques such as meditation.",
             ]
-        
-        elif stress_level == 1:  # Moderate
+        elif stress_level == 1:
             recommendations = [
-                "⚠️ You're experiencing moderate stress. It's important to take proactive steps.",
-                "🧘‍♀️ Practice daily relaxation techniques (deep breathing, meditation).",
-                "💤 Ensure you get 7-8 hours of quality sleep.",
-                "🏃‍♂️ Engage in regular physical activity (30 minutes daily).",
-                "👥 Talk to friends, family, or a counselor about your concerns."
+                "You are experiencing moderate stress. Take early action now.",
+                "Practice daily relaxation techniques such as breathing or meditation.",
+                "Aim for 7 to 8 hours of quality sleep.",
+                "Try regular physical activity for at least 30 minutes a day.",
+                "Talk with friends, family, or a counselor about your concerns.",
             ]
-        
-        elif stress_level == 2:  # High
+        elif stress_level == 2:
             recommendations = [
-                "🚨 You're experiencing high stress levels. Professional support is recommended.",
-                "🩺 Consider scheduling an appointment with a mental health professional.",
-                "🧘 Practice stress-reduction techniques multiple times daily.",
-                "⏰ Prioritize and organize tasks to reduce overwhelm.",
-                "🚫 Limit caffeine and alcohol consumption.",
-                "💬 Reach out to your support network immediately."
+                "You are experiencing high stress. Professional support is recommended.",
+                "Consider scheduling an appointment with a mental health professional.",
+                "Practice stress-reduction techniques multiple times a day.",
+                "Prioritize and organize tasks to reduce overwhelm.",
+                "Limit caffeine and alcohol intake.",
+                "Reach out to your support network promptly.",
             ]
-        
-        else:  # Severe
+        else:
             recommendations = [
-                "⛑️ URGENT: You're experiencing severe stress. Seek professional help immediately.",
-                "🏥 Book an appointment with a doctor or mental health professional today.",
-                "☎️ Contact a crisis helpline if you're in immediate distress.",
-                "👨‍⚕️ Consider speaking with a psychiatrist about your symptoms.",
-                "👨‍👩‍👧 Inform trusted family members or friends about how you're feeling.",
-                "🛑 Take a break from stressful activities if possible."
+                "Urgent: you are experiencing severe stress. Seek professional help immediately.",
+                "Book an appointment with a doctor or mental health professional today.",
+                "Contact a crisis helpline if you are in immediate distress.",
+                "Consider speaking with a psychiatrist about your symptoms.",
+                "Tell trusted family members or friends how you are feeling.",
+                "Step away from stressful activities if possible.",
             ]
-        
-        # ✅ MEDIUM FIX: Align question mapping with questionnaire in user_routes.py
-        # Index mapping (0-based):
-        # 5: "How often do you have trouble falling or staying asleep?" (physical)
-        # 2: "How often do you feel irritable or angry?" (emotional)
-        # 12: "How often have you experienced changes in appetite?" (behavioral)
-        # 12: "How often do you avoid social interactions?" (behavioral)
-        
-        if responses[5] >= 4:  # Sleep issues (q6 - index 5)
-            recommendations.append("💤 Focus on improving sleep hygiene - maintain regular sleep schedule.")
-        
-        if responses[2] >= 4:  # Irritability/Anger (q3 - index 2)
-            recommendations.append("🧘 Practice relaxation techniques when you feel irritable or angry.")
-        
-        if responses[12] >= 4:  # Avoiding social interactions (q13 - index 12)
-            recommendations.append("👥 Try to maintain social connections, even briefly.")
-        
-        if responses[15] >= 4:  # Work/study stress (q16 - index 15)
-            recommendations.append("⚖️ Review your work-life balance and set healthy boundaries.")
-        
+
+        # Questionnaire mapping is zero-based here:
+        # 5  -> sleep issues
+        # 2  -> irritability/anger
+        # 12 -> avoiding social interactions
+        # 15 -> work/study stress
+        if responses[5] >= 4:
+            recommendations.append(
+                "Focus on improving sleep hygiene and keeping a regular sleep schedule."
+            )
+
+        if responses[2] >= 4:
+            recommendations.append(
+                "Practice relaxation techniques when you feel irritable or angry."
+            )
+
+        if responses[12] >= 4:
+            recommendations.append(
+                "Try to maintain social connection, even if only briefly."
+            )
+
+        if responses[15] >= 4:
+            recommendations.append(
+                "Review your work-life balance and set healthier boundaries."
+            )
+
         return recommendations
-    
+
     def retrain_with_new_data(self, new_responses: List[List[int]], new_labels: List[int]):
-        """Retrain model with accumulated user data (for future implementation)"""
-        # This would be implemented for continuous learning
-        # Currently just a placeholder
+        """Placeholder for future continuous-learning support."""
+        _ = (new_responses, new_labels)
         pass
 
-# Global predictor instance
+
 predictor = StressPredictor()
