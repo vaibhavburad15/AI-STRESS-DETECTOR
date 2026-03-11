@@ -16,43 +16,6 @@ const HomePage = () => {
       color: "blue"
     },
     {
-      icon: TestTube,
-      title: "Blood Test",
-      description: "Our Website also provides the Blood Test Laboratory. A blood test is one of the most common tests healthcare providers use to monitor your overall health or help diagnose medical conditions.",
-      action: () => {
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              const lat = position.coords.latitude;
-              const lng = position.coords.longitude;
-              window.open(`https://www.google.com/maps/search/pathology+lab+near+me/@${lat},${lng},15z`, '_blank');
-            },
-            () => {
-              window.open('https://www.google.com/maps/search/pathology+lab+near+me', '_blank');
-            }
-          );
-        } else {
-          window.open('https://www.google.com/maps/search/pathology+lab+near+me', '_blank');
-        }
-      },
-      buttonText: "Find Nearby Labs",
-      buttonIcon: MapPin,
-      color: "green"
-    },
-    {
-      icon: Phone,
-      title: "EMERGENCY",
-      description: "Emergency Ambulance Numbers - Call immediately in case of medical emergency",
-      action: () => {
-        if (confirm('Call emergency ambulance service 101?')) {
-          window.location.href = 'tel:101';
-        }
-      },
-      buttonText: "Call 101",
-      buttonIcon: Phone,
-      color: "red"
-    },
-    {
       icon: Pill,
       title: "Medicine use",
       description: "Our Website also provides the Medicine Support. Medicine is the science and practice of caring for a patient, managing the diagnosis, prognosis, prevention, treatment, palliation of their injury or disease, and promoting their health",

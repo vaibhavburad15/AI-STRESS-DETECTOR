@@ -255,9 +255,12 @@ const UserDashboard = () => {
     <div className="userdash-shell">
       <div className="userdash-layout">
         <aside className="userdash-sidebar hidden md:flex">
-          <div className="userdash-avatar">
-            <UserCircle2 className="h-8 w-8 text-white" />
-          </div>
+          <button type="button"
+            onClick={() => navigate('/account')}
+              className="userdash-avatar hover:opacity-80 transition-opacity"
+               title="View Account Details">
+                <UserCircle2 className="h-8 w-8 text-white" />
+                </button>
           <nav className="mt-8 flex flex-col items-center gap-3">
             {tabs.map((tab) => {
               const Icon = tab.icon;

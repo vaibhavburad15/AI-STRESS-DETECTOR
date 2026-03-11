@@ -1,16 +1,16 @@
-# Python virtual environment
+# Python
 myenv/
-
-# Python cache
 __pycache__/
 *.pyc
 
-# Environment variables
-.env
-
-# Node modules
+# Node
 node_modules/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Build cachei8            
+.vite/
+
+# Environment files
+.env
+
+# VS Code
+.vscode/

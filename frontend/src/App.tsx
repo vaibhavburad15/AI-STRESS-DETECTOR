@@ -10,6 +10,7 @@ import UserDashboard from './pages/UserDashboard';
 import DoctorDashboard from './pages/DoctorDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import AppointmentsPage from './pages/AppointmentsPage';
+import AccountDetailsPage from './pages/AccountDetailsPage';
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }: { children: JSX.Element; allowedRoles: string[] }) => {
@@ -59,9 +60,17 @@ function App() {
             <ProtectedRoute allowedRoles={['doctor']}>
               <DoctorDashboard />
             </ProtectedRoute>
+            
           }
         />
-        
+        <Route
+          path="/account"
+        element={
+         <ProtectedRoute allowedRoles={['user']}>
+         <AccountDetailsPage />
+          </ProtectedRoute>
+       }
+         />
         <Route
           path="/admin/dashboard"
           element={
