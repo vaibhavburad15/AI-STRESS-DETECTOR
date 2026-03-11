@@ -16,12 +16,14 @@ import {
   ShieldCheck,
   Stethoscope,
   UserCircle2,
+  Video,
 } from 'lucide-react';
 import { authService } from '../services/api';
 import api from '../services/api';
 import type { Appointment, Doctor, Question, Test, ChatbotResponse } from '../types';
 import MedicalRecordsManager from '../components/MedicalRecordsManager';
 import AddTestToRecords from '../components/AddTestToRecords';
+import VideoAssessmentModal from '../components/VideoAssessmentModal';
 
 type DashboardTab = 'test' | 'chatbot' | 'history' | 'appointments' | 'records';
 
@@ -78,6 +80,7 @@ const UserDashboard = () => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [showVideoModal, setShowVideoModal] = useState(false);
 
   // Chatbot state
   const [chatMessages, setChatMessages] = useState<Array<{type: 'user' | 'bot', content: string, stressLevel?: number, stressLabel?: string, confidence?: number}>>([]);
@@ -409,13 +412,24 @@ const UserDashboard = () => {
                       Confidential
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleStartTest}
-                    className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-500 px-8 py-3 text-lg font-semibold text-white"
-                  >
-                    Start Assessment
-                  </button>
+                  <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+                    <button
+                      type="button"
+                      onClick={handleStartTest}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-500 px-7 py-3 text-base font-semibold text-white shadow hover:from-blue-700 hover:to-indigo-600"
+                    >
+                      <ClipboardList className="h-5 w-5" />
+                      Text Assessment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowVideoModal(true)}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 px-7 py-3 text-base font-semibold text-white shadow hover:from-violet-700 hover:to-purple-600"
+                    >
+                      <Video className="h-5 w-5" />
+                      Video Interview
+                    </button>
+                  </div>
                 </article>
 
                 <article className="userdash-card p-6">
@@ -860,6 +874,19 @@ const UserDashboard = () => {
           )}
         </main>
       </div>
+
+      {/* Video Assessment Modal — full-screen overlay */}
+      {showVideoModal && (
+        <VideoAssessmentModal
+          questions={questionnaire}
+          onComplete={(result) => {
+            setShowVideoModal(false);
+            setTestResult(result);
+            loadTestHistory();
+          }}
+          onClose={() => setShowVideoModal(false)}
+        />
+      )}
     </div>
   );
 };

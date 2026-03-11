@@ -2,6 +2,9 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from bson import ObjectId
 from datetime import datetime
 from typing import List
+import json as _json
+import re as _re
+from pydantic import BaseModel
 from ..models import (
     TestSubmission, TestResponse, AppointmentCreate, AppointmentResponse,
     GetEnhancedRecommendationsRequest, RecommendationProgressCreate,
@@ -88,6 +91,196 @@ async def get_questionnaire():
             "5": "Always/Extremely"
         }
     }
+
+# ============================================
+# VIDEO ASSESSMENT — helpers & endpoint
+# ============================================
+
+class VideoTestSubmission(BaseModel):
+    verbal_responses: List[str]   # 18 natural-language answers
+
+
+def _keyword_score(answer: str, question_index: int) -> int:
+    """
+    Map a verbal answer to a 1-5 stress score using keyword matching.
+    Q15 (index 14) is inverted because it asks about *satisfaction*
+    (high satisfaction = low stress).
+    """
+    a = answer.lower()
+
+    if any(w in a for w in ['always', 'constantly', 'extremely', 'very much',
+                             'all the time', 'severely', 'completely', 'totally',
+                             'absolutely', 'overwhelmingly', 'unbearable']):
+        raw = 5
+    elif any(w in a for w in ['often', 'frequently', 'quite', 'usually', 'a lot',
+                               'regularly', 'most of the time', 'mostly', 'generally',
+                               'very often', 'quite often']):
+        raw = 4
+    elif any(w in a for w in ['sometimes', 'occasionally', 'moderate', 'a bit',
+                               'somewhat', 'neutral', 'average', 'now and then',
+                               'from time to time', 'moderately']):
+        raw = 3
+    elif any(w in a for w in ['rarely', 'seldom', 'almost never', 'barely',
+                               'not much', 'a little', 'slightly', 'minimal',
+                               'not really', 'hardly']):
+        raw = 2
+    elif any(w in a for w in ['never', 'not at all', 'nope', 'none', 'zero',
+                               'no ', 'not ever', 'absolutely not']):
+        raw = 1
+    else:
+        raw = 3  # default to moderate
+
+    # Q15 → invert: "very satisfied" (raw=1 from "never stressed") → score 1 (low stress)
+    if question_index == 14:
+        raw = 6 - raw   # 1↔5, 2↔4, 3↔3
+
+    return raw
+
+
+async def _convert_with_groq(verbal_responses: List[str]) -> List[int]:
+    """
+    Use the Groq LLM to convert 18 verbal answers into 1-5 numeric stress scores.
+    Raises an exception if every model fails so the caller can fall back to keywords.
+    """
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("GROQ_API_KEY not set")
+
+    client = groq.AsyncGroq(api_key=api_key)
+
+    # Build the conversation prompt
+    qa_lines = "\n".join(
+        f"Q{i+1}: {QUESTIONNAIRE[i]['question']}\nA{i+1}: {verbal_responses[i]}"
+        for i in range(18)
+    )
+
+    prompt = (
+        "You are rating stress-assessment questionnaire responses.\n"
+        "For each question-answer pair, assign a score from 1 to 5:\n"
+        "  1 = Never / Not at all (lowest stress)\n"
+        "  2 = Rarely / Slightly\n"
+        "  3 = Sometimes / Moderately\n"
+        "  4 = Often / Very\n"
+        "  5 = Always / Extremely (highest stress)\n"
+        "Special rule — Q15 asks about work-life balance *satisfaction* (not frequency of stress):\n"
+        "  1 = Very satisfied (low stress), 5 = Very unsatisfied (high stress).\n\n"
+        f"{qa_lines}\n\n"
+        'Return ONLY a valid JSON object with exactly 18 integers, e.g.:\n'
+        '{"scores": [1, 3, 2, 4, 5, 2, 1, 3, 4, 5, 2, 3, 1, 4, 2, 3, 4, 5]}'
+    )
+
+    for model in _groq_model_candidates():
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=150,
+                temperature=0.1,
+            )
+            content = response.choices[0].message.content or ""
+            match = _re.search(r'\{.*?\}', content, _re.DOTALL)
+            if match:
+                data = _json.loads(match.group())
+                scores = data.get("scores", [])
+                if len(scores) == 18 and all(isinstance(s, (int, float)) for s in scores):
+                    clamped = [max(1, min(5, int(round(s)))) for s in scores]
+                    return clamped
+        except Exception as exc:
+            logger.warning("Groq model %s failed for video scoring: %s", model, exc)
+            continue
+
+    raise RuntimeError("All Groq models failed for verbal-to-score conversion")
+
+
+async def convert_verbal_to_scores(verbal_responses: List[str]) -> List[int]:
+    """
+    Convert 18 verbal answers to 1-5 scores.
+    Tries Groq first; falls back to keyword matching.
+    """
+    try:
+        return await _convert_with_groq(verbal_responses)
+    except Exception as exc:
+        logger.info("Falling back to keyword scoring: %s", exc)
+        return [_keyword_score(ans, i) for i, ans in enumerate(verbal_responses)]
+
+
+@router.post("/video-test/submit", response_model=TestResponse)
+async def submit_video_test(
+    video_test: VideoTestSubmission,
+    current_user: dict = Depends(require_role(["user"])),
+):
+    """
+    Submit a video-based stress assessment.
+    Accepts 18 natural-language verbal responses, converts them to 1-5 scores
+    (via Groq if available, else keyword matching), runs the ML predictor,
+    and returns the same TestResponse format as the text assessment.
+    """
+    user_id = current_user["user_id"]
+
+    if len(video_test.verbal_responses) != 18:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Expected exactly 18 verbal responses",
+        )
+
+    # Convert verbal answers → numeric scores
+    scores = await convert_verbal_to_scores(video_test.verbal_responses)
+
+    # ML prediction
+    try:
+        stress_level, stress_label, confidence, recommendations = predictor.predict(scores)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Prediction error: {str(exc)}",
+        )
+
+    # Persist
+    test_dict = {
+        "user_id": user_id,
+        "responses": scores,
+        "verbal_responses": video_test.verbal_responses,
+        "assessment_type": "video",
+        "stress_level": int(stress_level),
+        "stress_label": stress_label,
+        "confidence_score": confidence,
+        "recommendations": recommendations,
+        "timestamp": datetime.utcnow(),
+    }
+
+    result = tests_collection.insert_one(test_dict)
+    test_id = str(result.inserted_id)
+
+    users_collection.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$push": {"test_history": test_id}},
+    )
+
+    # Optional SMS notification (same as text test)
+    try:
+        submitting_user = users_collection.find_one({"_id": ObjectId(user_id)})
+        if submitting_user and submitting_user.get("phone_number"):
+            sms_service.send_stress_result_sms(
+                phone=submitting_user["phone_number"],
+                user_name=submitting_user["name"],
+                stress_label=stress_label,
+                confidence=confidence,
+                top_recommendations=recommendations[:3] if recommendations else [],
+            )
+    except Exception as exc:
+        logger.warning("Failed to send stress result SMS: %s", exc)
+
+    return {
+        "id": test_id,
+        "user_id": user_id,
+        "responses": scores,
+        "stress_level": int(stress_level),
+        "stress_label": stress_label,
+        "confidence_score": confidence,
+        "recommendations": recommendations,
+        "timestamp": test_dict["timestamp"],
+    }
+
 
 # ============================================
 # STRESS TEST ENDPOINTS (ORIGINAL)

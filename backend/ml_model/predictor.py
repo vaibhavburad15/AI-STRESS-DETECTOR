@@ -3,6 +3,7 @@ import pickle
 from typing import List, Tuple
 
 import numpy as np
+import pandas as pd
 
 
 class StressPredictor:
@@ -58,7 +59,7 @@ class StressPredictor:
         if not all(1 <= r <= 5 for r in responses):
             raise ValueError("All responses must be between 1 and 5")
 
-        X = np.array(responses).reshape(1, -1)
+        X = pd.DataFrame([responses], columns=[f"q{i+1}" for i in range(18)])
 
         prediction = int(self.model.predict(X)[0])
         probabilities = self.model.predict_proba(X)[0]
