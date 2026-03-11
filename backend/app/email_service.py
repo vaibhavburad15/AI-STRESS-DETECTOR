@@ -251,6 +251,23 @@ class EmailService:
         
         # Send async (non-blocking)
         self._send_email_async(user_email, subject, body)
+
+    def send_appointment_booked_email(
+        self,
+        user_email: str,
+        user_name: str,
+        doctor_name: str,
+        appointment_time: str,
+        notes: Optional[str] = None
+    ):
+        """Backward-compatible alias used by route handlers."""
+        _ = notes
+        self.send_appointment_confirmation_email(
+            user_email=user_email,
+            user_name=user_name,
+            doctor_name=doctor_name,
+            appointment_time=appointment_time
+        )
     
     def send_appointment_approved_email(self, user_email: str, user_name: str, doctor_name: str, appointment_time: str):
         """Send appointment approval email (ASYNC - non-blocking)"""

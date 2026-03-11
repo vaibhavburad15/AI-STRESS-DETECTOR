@@ -17,11 +17,11 @@ const api = axios.create({
   },
 });
 
-// Add user ID to requests (since we removed JWT)
+// ✅ FIX: Add JWT token to requests instead of X-User-ID
 api.interceptors.request.use((config) => {
-  const user = authService.getUser();
-  if (user) {
-    config.headers['X-User-ID'] = user.id;
+  const token = authService.getToken();
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`;
   }
   return config;
 });
@@ -32,6 +32,7 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('user');
+      localStorage.removeItem('access_token');
       window.location.href = '/login';
     }
     return Promise.reject(error);
@@ -46,7 +47,8 @@ export const authService = {
     age: number,
     gender: string,
     location: string,
-    hasPreviousStressIssues: boolean
+    hasPreviousStressIssues: boolean,
+    phone_number?: string
   ): Promise<any> {
     const { data } = await api.post('/api/auth/register/user', {
       name,
@@ -56,6 +58,7 @@ export const authService = {
       gender,
       location,
       has_previous_stress_issues: hasPreviousStressIssues,
+      phone_number
     });
     return data;
   },
@@ -67,7 +70,8 @@ export const authService = {
     license_number: string,
     state_medical_council: string,
     specialization: string,
-    available_slots: string[]
+    available_slots: string[],
+    phone_number?: string
   ): Promise<any> {
     const { data } = await api.post('/api/auth/register/doctor', {
       name,
@@ -77,6 +81,7 @@ export const authService = {
       state_medical_council,
       specialization,
       available_slots,
+      phone_number
     });
     return data;
   },
@@ -86,9 +91,8 @@ export const authService = {
     return data.state_medical_councils || [];
   },
 
-  async uploadMedicalDocument(email: string, file: File): Promise<any> {
+  async uploadMedicalDocument(file: File): Promise<any> {
     const formData = new FormData();
-    formData.append('email', email);
     formData.append('file', file);
 
     const { data } = await api.post('/api/auth/upload-medical-document', formData, {
@@ -125,6 +129,7 @@ export const authService = {
 
   saveAuth(authResponse: any) {
     localStorage.setItem('user', JSON.stringify(authResponse.user));
+    localStorage.setItem('access_token', authResponse.access_token);
   },
 
   getUser(): any | null {
@@ -132,12 +137,66 @@ export const authService = {
     return userStr ? JSON.parse(userStr) : null;
   },
 
+  getToken(): string | null {
+    return localStorage.getItem('access_token');
+  },
+
   logout() {
     localStorage.removeItem('user');
+    localStorage.removeItem('access_token');
   },
 
   isAuthenticated(): boolean {
-    return !!this.getUser();
+    return !!this.getToken() && !!this.getUser();
+  },
+};
+
+export const chatbotService = {
+  async sendMessage(userId: string, message: string): Promise<any> {
+    const { data } = await api.post('/api/user/chatbot/chat', {
+      user_id: userId,
+      message,
+    });
+    return data;
+  },
+};
+
+// ✅ MEDIUM FIX: Export medical records API calls using shared client
+export const medicalRecordsService = {
+  async getRecords(userId: string, filters?: any): Promise<any> {
+    const params = new URLSearchParams();
+    if (filters?.record_type) params.append('record_type', filters.record_type);
+    if (filters?.search) params.append('search', filters.search);
+    const { data } = await api.get(`/api/medical-records/user/${userId}?${params.toString()}`);
+    return data;
+  },
+
+  async getStats(userId: string): Promise<any> {
+    const { data } = await api.get(`/api/medical-records/stats/${userId}`);
+    return data;
+  },
+
+  async uploadRecord(formData: FormData): Promise<any> {
+    const { data } = await api.post('/api/medical-records/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
+  async updateRecord(recordId: string, updates: any): Promise<any> {
+    const { data } = await api.put(`/api/medical-records/${recordId}`, updates);
+    return data;
+  },
+
+  async deleteRecord(recordId: string): Promise<any> {
+    await api.delete(`/api/medical-records/${recordId}`);
+  },
+
+  async downloadRecord(recordId: string): Promise<Blob> {
+    const response = await api.get(`/api/medical-records/${recordId}/download`, {
+      responseType: 'blob',
+    });
+    return response.data;
   },
 };
 

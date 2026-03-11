@@ -10,6 +10,7 @@ A comprehensive full-stack web application for **AI-powered stress detection** u
 - User registration and login
 - **18-question CBT-based stress assessment**
 - **ML-powered stress level prediction** (Low/Moderate/High/Severe)
+- **24/7 AI Stress Counselor** with automatic stress detection
 - Personalized recommendations based on stress level
 - View test history with trend analysis
 - Book appointments with verified doctors
@@ -59,6 +60,7 @@ A comprehensive full-stack web application for **AI-powered stress detection** u
 - **4 stress levels**: Low (0), Moderate (1), High (2), Severe (3)
 - Confidence scoring for predictions
 - Model persistence with pickle
+- **AI Chatbot** with Groq's versatile model for real-time stress detection
 
 ## 📋 Prerequisites
 
@@ -93,6 +95,20 @@ uvicorn app.main:app --reload
 
 Backend will run on: **http://localhost:8000**
 
+### 2.1 Optional SMS Notifications (Fast2SMS)
+
+To enable OTP and appointment updates via Fast2SMS, add these values in `backend/.env`:
+
+```env
+SMS_PROVIDER=fast2sms
+FAST2SMS_API_KEY=your_fast2sms_api_key
+FAST2SMS_ROUTE=q
+FAST2SMS_LANGUAGE=english
+FAST2SMS_COUNTRY_CODE=91
+```
+
+If these values are not set, SMS sending stays disabled and core app flows still work.
+
 ### 3. Frontend Setup
 
 ```bash
@@ -109,25 +125,35 @@ Frontend will run on: **http://localhost:3000**
 
 ## 🗄️ Database Configuration
 
-The application connects to MongoDB at:
+The application connects to MongoDB at (configurable via `MONGODB_URL` env var):
 ```
-mongodb://localhost:27017/ai%20stress%20detector
+mongodb://localhost:27017/aistressdetector
 ```
 
 ### Collections Created Automatically:
 - `users` - User accounts
-- `doctors` - Doctor accounts
+- `doctors` - Doctor accounts  
+- `admins` - Admin accounts
 - `tests` - Stress test results
 - `appointments` - Doctor appointments
-- `admin` - Admin accounts
+- `medical_records` - User medical documents
+- `achievements` - User gamification data
 
-### Default Admin Credentials:
-```
-Username: admin
-Password: admin123
+### Default Admin Setup:
+⚠️ **IMPORTANT**: The default admin password must be set via environment variable:
+
+```bash
+# In backend/.env
+ADMIN_PASSWORD=your_secure_admin_password_here
 ```
 
-⚠️ **Change this in production!**
+When the backend starts, it creates an admin user if one doesn't exist:
+```
+Email: admin@stressanalyzer.com
+Password: (from ADMIN_PASSWORD env var)
+```
+
+**Change the default admin password after first login in production!**
 
 ## 📊 ML Model Details
 
@@ -170,6 +196,7 @@ Severe            1.00      0.88      0.94
 - `GET /api/user/doctors` - Get verified doctors
 - `POST /api/user/appointment/book` - Book appointment
 - `GET /api/user/appointments/{user_id}` - Get appointments
+- `POST /api/user/chatbot/chat` - Chat with AI counselor (auto-detects stress)
 
 ### Doctor
 - `GET /api/doctor/appointments/{doctor_id}` - Get appointments with patient data
@@ -217,6 +244,8 @@ The ML model is designed for continuous improvement:
 # Set environment variables
 MONGODB_URL=your_mongodb_atlas_url
 SECRET_KEY=your_strong_secret_key
+GROQ_API_KEY=your_groq_api_key
+GROQ_CHAT_MODEL=llama-3.3-70b-versatile
 ```
 
 ### Frontend (Vercel/Netlify)
@@ -230,20 +259,27 @@ VITE_API_URL=your_backend_url
 ### Sample Test Credentials
 
 **User:**
-- Register a new user account
-- Take the stress test
-- Book appointments
+- Email: user@example.com (register a new account)
+- Password: your_secure_password
+- Complete email verification to access dashboard
 
 **Doctor:**
-- Name: Dr. John Smith
-- Email: doctor@example.com
-- Password: doctor123
-- License: MD123456
+- Email: doctor@example.com (register a new account)  
+- License Number: MD123456
 - Specialization: Clinical Psychology
+- NMC verification required
+- Admin approval needed to activate account
 
 **Admin:**
-- Username: admin
-- Password: admin123
+- Email: admin@stressanalyzer.com
+- Password: (set via ADMIN_PASSWORD env var)
+- Can only be created by system administrator
+
+### Authentication Flow
+- Users register → verify email via OTP → login receives JWT token
+- JWT token valid for 24 hours (configurable)
+- All API requests require `Authorization: Bearer <token>` header
+- Tokens stored securely in localStorage (frontend)
 
 ## 📊 Stress Level Recommendations
 

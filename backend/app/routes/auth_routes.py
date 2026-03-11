@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, Depends
 from fastapi.responses import JSONResponse
 from datetime import datetime
 from bson import ObjectId
@@ -8,8 +8,9 @@ from ..models import (
     OTPVerify, ResendOTPRequest
 )
 from ..database import users_collection, doctors_collection, admin_collection
-from ..auth import verify_password, get_password_hash
+from ..auth import verify_password, get_password_hash, require_role, create_access_token
 from ..email_service import email_service
+from ..sms_service import sms_service
 from ..otp_utils import generate_otp, store_otp, verify_otp
 from ..nmc_verification import (
     build_nmc_profile,
@@ -41,9 +42,23 @@ async def get_doctor_state_medical_councils():
 async def register_user(user: UserRegister):
     """Register a new user - sends OTP for verification"""
     
-    # Check if email already exists
+    # ✅ HIGH FIX: Check email uniqueness across ALL collections, not just users
     existing_user = users_collection.find_one({"email": user.email})
     if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    existing_doctor = doctors_collection.find_one({"email": user.email})
+    if existing_doctor:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered as a doctor account"
+        )
+    
+    existing_admin = admin_collection.find_one({"email": user.email})
+    if existing_admin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
@@ -58,6 +73,7 @@ async def register_user(user: UserRegister):
         "gender": user.gender,
         "location": user.location,
         "has_previous_stress_issues": user.has_previous_stress_issues,
+        "phone_number": user.phone_number or "",
         "medical_document_path": None,
         "role": "user",
         "email_verified": False,
@@ -73,6 +89,8 @@ async def register_user(user: UserRegister):
     otp = generate_otp()
     store_otp(user.email, otp, "user")
     email_service.send_otp_email(user.email, otp, "user")
+    if user.phone_number:
+        sms_service.send_otp_sms(user.phone_number, otp, "user")
     
     return {
         "user": {
@@ -85,16 +103,32 @@ async def register_user(user: UserRegister):
             "location": user.location,
             "email_verified": False
         },
-        "message": "Registration successful! Please check your email for the verification code."
+        "message": "Registration successful! Please check your email for the verification code.",
+        "access_token": "",  # Placeholder, not issued until email verified
+        "token_type": "bearer"
     }
 
 @router.post("/register/doctor", response_model=TokenResponse)
 async def register_doctor(doctor: DoctorRegister):
     """Register a new doctor with NMC verification and admin approval workflow"""
     
-    # Check if email already exists
+    # ✅ HIGH FIX: Check email uniqueness across ALL collections
     existing_doctor = doctors_collection.find_one({"email": doctor.email})
     if existing_doctor:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    existing_user = users_collection.find_one({"email": doctor.email})
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered as a user account"
+        )
+    
+    existing_admin = admin_collection.find_one({"email": doctor.email})
+    if existing_admin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
@@ -143,6 +177,7 @@ async def register_doctor(doctor: DoctorRegister):
         "state_medical_council": doctor.state_medical_council,
         "specialization": doctor.specialization,
         "available_slots": doctor.available_slots,
+        "phone_number": doctor.phone_number or "",
         "role": "doctor",
         "is_verified": False,  # Admin approval is still required
         "nmc_verified": True,
@@ -160,6 +195,8 @@ async def register_doctor(doctor: DoctorRegister):
     otp = generate_otp()
     store_otp(doctor.email, otp, "doctor")
     email_service.send_otp_email(doctor.email, otp, "doctor")
+    if doctor.phone_number:
+        sms_service.send_otp_sms(doctor.phone_number, otp, "doctor")
     
     return {
         "user": {
@@ -177,7 +214,9 @@ async def register_doctor(doctor: DoctorRegister):
         "message": (
             "Registration successful! NMC profile verified. "
             "Please verify your email for login; account will be activated after admin approval."
-        )
+        ),
+        "access_token": "",  # Placeholder, not issued until email verified and admin approval
+        "token_type": "bearer"
     }
 
 @router.post("/verify-otp")
@@ -229,8 +268,10 @@ async def verify_email_with_otp(request: OTPVerify):
             detail="User not found"
         )
     
-    # Send welcome email
+    # Send welcome email + SMS
     email_service.send_welcome_email(request.email, user["name"], user_type)
+    if user.get("phone_number"):
+        sms_service.send_welcome_sms(user["phone_number"], user["name"], user_type)
     
     message = "Email verified successfully! You can now log in."
     if user_type == "doctor" and not user.get("is_verified", False):
@@ -255,6 +296,7 @@ async def verify_email_with_otp(request: OTPVerify):
 @router.post("/resend-otp")
 async def resend_otp(request: ResendOTPRequest):
     """Resend OTP to email"""
+    # ✅ LOW/MEDIUM FIX: Prevent email enumeration by always returning same response
     
     # Check in users collection
     user = users_collection.find_one({"email": request.email})
@@ -265,40 +307,26 @@ async def resend_otp(request: ResendOTPRequest):
         user = doctors_collection.find_one({"email": request.email})
         user_type = "doctor"
     
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email not found"
-        )
+    # Always return same response regardless of whether email exists or is verified
+    # This prevents attackers from enumerating valid email addresses
+    if user and not user.get("email_verified", False):
+        # Generate new OTP and send email
+        otp = generate_otp()
+        store_otp(request.email, otp, user_type)
+        email_service.send_otp_email(request.email, otp, user_type)
     
-    # Check if already verified
-    if user.get("email_verified", False):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already verified"
-        )
-    
-    # Generate new OTP and send email
-    otp = generate_otp()
-    store_otp(request.email, otp, user_type)
-    email_service.send_otp_email(request.email, otp, user_type)
-    
-    return {"message": "New verification code sent! Please check your email."}
+    # Always give same response to avoid enumeration
+    return {"message": "If this email is registered and not yet verified, check your email for the verification code."}
 
 @router.post("/upload-medical-document")
 async def upload_medical_document(
-    email: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_role(["user"]))
 ):
-    """Upload medical document for user"""
+    """Upload medical document for authenticated user (can only upload for themselves)"""
     
-    # Find user
-    user = users_collection.find_one({"email": email})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    # ✅ CRITICAL FIX: Authenticate user and ensure they can only upload for themselves
+    user_id = current_user["user_id"]
     
     # Get filename safely
     filename = file.filename if file.filename else "document"
@@ -326,7 +354,6 @@ async def upload_medical_document(
         )
     
     # Generate unique filename
-    user_id = str(user["_id"])
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     safe_filename = f"{user_id}_{timestamp}{file_ext}"
     file_path = UPLOAD_DIR / safe_filename
@@ -344,7 +371,7 @@ async def upload_medical_document(
     # Update user document with file path
     users_collection.update_one(
         {"_id": ObjectId(user_id)},
-        {"$set": {"medical_document_path": str(file_path)}}
+        {"$set": {"medical_document_path": safe_filename}}  # Store only filename, not full path
     )
     
     return {
@@ -354,11 +381,11 @@ async def upload_medical_document(
 
 @router.post("/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
-    """Login user (email must be verified)"""
+    """Login user (email must be verified) and return JWT token"""
     
-    # Try to find user
+    # Try to find user in different collections
     user = users_collection.find_one({"email": credentials.email})
-    role = "user" if user else None
+    role: Optional[str] = "user" if user else None
     
     if not user:
         user = doctors_collection.find_one({"email": credentials.email})
@@ -382,9 +409,27 @@ async def login(credentials: UserLogin):
             detail="Please verify your email before logging in. Check your inbox for the verification code."
         )
     
+    # ✅ HIGH FIX: Check if doctor is approved by admin before allowing login
+    if role == "doctor" and not user.get("is_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is awaiting admin approval. Please check back later."
+        )
+    
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid user role"
+        )
+    
+    user_id = str(user["_id"])
+    
+    # Create JWT token
+    access_token = create_access_token(user_id, role, credentials.email)
+    
     # Prepare user response
     user_response = {
-        "id": str(user["_id"]),
+        "id": user_id,
         "name": user.get("name", user.get("username")),
         "email": user["email"],
         "role": role,
@@ -404,4 +449,4 @@ async def login(credentials: UserLogin):
         user_response["state_medical_council"] = user.get("state_medical_council")
         user_response["nmc_profile"] = user.get("nmc_profile")
 
-    return {"user": user_response}
+    return {"user": user_response, "access_token": access_token, "token_type": "bearer"}

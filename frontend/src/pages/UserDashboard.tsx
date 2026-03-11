@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Brain,
   BrainCircuit,
   CalendarDays,
   ChevronRight,
@@ -13,20 +12,24 @@ import {
   Flower2,
   History as HistoryIcon,
   LogOut,
+  MessageCircle,
   ShieldCheck,
   Stethoscope,
   UserCircle2,
+  Video,
 } from 'lucide-react';
 import { authService } from '../services/api';
 import api from '../services/api';
-import type { Appointment, Doctor, Question, Test } from '../types';
+import type { Appointment, Doctor, Question, Test, ChatbotResponse } from '../types';
 import MedicalRecordsManager from '../components/MedicalRecordsManager';
 import AddTestToRecords from '../components/AddTestToRecords';
+import VideoAssessmentModal from '../components/VideoAssessmentModal';
 
-type DashboardTab = 'test' | 'history' | 'appointments' | 'records';
+type DashboardTab = 'test' | 'chatbot' | 'history' | 'appointments' | 'records';
 
 const tabs: Array<{ id: DashboardTab; label: string; shortLabel: string; icon: LucideIcon }> = [
   { id: 'test', label: 'Take Test', shortLabel: 'Test', icon: ClipboardList },
+  { id: 'chatbot', label: 'AI Counselor', shortLabel: 'Chat', icon: MessageCircle },
   { id: 'history', label: 'History', shortLabel: 'History', icon: HistoryIcon },
   { id: 'appointments', label: 'Appointments', shortLabel: 'Appointments', icon: CalendarDays },
   { id: 'records', label: 'Medical Records', shortLabel: 'Records', icon: FileTextIcon },
@@ -77,6 +80,12 @@ const UserDashboard = () => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [showVideoModal, setShowVideoModal] = useState(false);
+
+  // Chatbot state
+  const [chatMessages, setChatMessages] = useState<Array<{type: 'user' | 'bot', content: string, stressLevel?: number, stressLabel?: string, confidence?: number}>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
 
   useEffect(() => {
     loadQuestionnaire();
@@ -192,6 +201,11 @@ const UserDashboard = () => {
   };
 
   const handleSubmitTest = async (finalResponses: number[] = responses) => {
+    // ✅ LOW FIX: Prevent duplicate submissions by checking submitting flag
+    if (submitting) {
+      return; // Already submitting, prevent duplicate
+    }
+    
     if (finalResponses.some((r) => r === 0)) {
       alert('Please answer all questions');
       return;
@@ -200,7 +214,6 @@ const UserDashboard = () => {
     setSubmitting(true);
     try {
       const { data } = await api.post('/api/user/test/submit', {
-        user_id: user?.id,
         responses: finalResponses,
       });
       setTestResult(data);
@@ -216,7 +229,7 @@ const UserDashboard = () => {
   const handleBookAppointment = async (doctorId: string, timeSlot: string) => {
     try {
       await api.post('/api/user/appointment/book', {
-        user_id: user?.id,
+        // ✅ FIX: Don't send user_id from client, use authenticated user
         doctor_id: doctorId,
         time_slot: timeSlot,
       });
@@ -230,6 +243,45 @@ const UserDashboard = () => {
   const handleLogout = () => {
     authService.logout();
     navigate('/login');
+  };
+
+  // Chatbot functions
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || chatLoading) return;
+
+    const userMessage = chatInput.trim();
+    setChatInput('');
+    setChatMessages(prev => [...prev, { type: 'user', content: userMessage }]);
+    setChatLoading(true);
+
+    try {
+      const { data: response } = await api.post<ChatbotResponse>('/api/user/chatbot/chat', {
+        user_id: user?.id,
+        message: userMessage,
+      });
+
+      setChatMessages(prev => [...prev, {
+        type: 'bot',
+        content: response.response,
+        stressLevel: response.detected_stress_level,
+        stressLabel: response.detected_stress_label,
+        confidence: response.confidence
+      }]);
+    } catch (error: any) {
+      setChatMessages(prev => [...prev, {
+        type: 'bot',
+        content: 'Sorry, I\'m having trouble connecting right now. Please try again later.'
+      }]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handleChatKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
   };
 
   const getStressColor = (level: number) =>
@@ -284,12 +336,10 @@ const UserDashboard = () => {
         <main className="userdash-main">
           <header className="userdash-header animate-fadeIn">
             <div className="flex items-center gap-3">
-              <div className="userdash-brain-icon">
-                <Brain className="h-5 w-5 text-blue-700" />
-              </div>
+              
               <div>
-                <h1 className="text-2xl font-semibold text-slate-900">User Dashboard</h1>
-                <p className="text-sm text-slate-600">Welcome, {user?.name || 'User'}!</p>
+               
+                <p className="text-2xl font-semibold text-slate-900">Welcome, {user?.name || 'User'}!</p>
               </div>
             </div>
             <button
@@ -365,13 +415,24 @@ const UserDashboard = () => {
                       Confidential
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleStartTest}
-                    className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-500 px-8 py-3 text-lg font-semibold text-white"
-                  >
-                    Start Assessment
-                  </button>
+                  <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+                    <button
+                      type="button"
+                      onClick={handleStartTest}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-500 px-7 py-3 text-base font-semibold text-white shadow hover:from-blue-700 hover:to-indigo-600"
+                    >
+                      <ClipboardList className="h-5 w-5" />
+                      Text Assessment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowVideoModal(true)}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 px-7 py-3 text-base font-semibold text-white shadow hover:from-violet-700 hover:to-purple-600"
+                    >
+                      <Video className="h-5 w-5" />
+                      Video Interview
+                    </button>
+                  </div>
                 </article>
 
                 <article className="userdash-card p-6">
@@ -567,7 +628,6 @@ const UserDashboard = () => {
               </div>
               <div className="mb-5">
                 <AddTestToRecords
-                  userId={user?.id || ''}
                   testId={testResult.id}
                   stressLevel={testResult.stress_level}
                   stressLabel={testResult.stress_label}
@@ -593,6 +653,86 @@ const UserDashboard = () => {
                 >
                   Book Appointment
                 </button>
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'chatbot' && (
+            <section className="userdash-card p-6 md:p-8">
+              <div className="mb-6">
+                <h2 className="text-3xl font-semibold text-slate-900">AI Stress Counselor</h2>
+                <p className="mt-1 text-slate-600">Talk to our AI counselor 24/7. It automatically detects your stress levels and provides personalized support.</p>
+              </div>
+
+              <div className="flex flex-col h-96">
+                <div className="flex-1 overflow-y-auto mb-4 p-4 bg-slate-50 rounded-xl">
+                  {chatMessages.length === 0 ? (
+                    <div className="text-center text-slate-500">
+                      <MessageCircle className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                      <p>Start a conversation with your AI counselor</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {chatMessages.map((msg, idx) => (
+                        <div key={idx} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                            msg.type === 'user'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-slate-900 border border-slate-200'
+                          }`}>
+                            <p className="text-sm">{msg.content}</p>
+                            {msg.stressLevel !== undefined && msg.stressLabel && (
+                              <div className="mt-2 pt-2 border-t border-slate-300">
+                                <p className={`text-xs font-semibold ${getStressColor(msg.stressLevel)}`}>
+                                  Detected: {msg.stressLabel} Stress
+                                </p>
+                                {msg.confidence && (
+                                  <p className="text-xs text-slate-500">
+                                    Confidence: {(msg.confidence * 100).toFixed(1)}%
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {chatLoading && (
+                        <div className="flex justify-start">
+                          <div className="bg-white border border-slate-200 px-4 py-2 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <div className="flex gap-1">
+                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                              </div>
+                              <span className="text-sm text-slate-500">AI is thinking...</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyPress={handleChatKeyPress}
+                    placeholder="Type your message here..."
+                    className="flex-1 rounded-lg border border-slate-300 px-4 py-2 focus:border-blue-500 focus:outline-none"
+                    disabled={chatLoading}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendMessage}
+                    disabled={!chatInput.trim() || chatLoading}
+                    className="rounded-lg bg-blue-600 px-6 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Send
+                  </button>
+                </div>
               </div>
             </section>
           )}
@@ -737,6 +877,19 @@ const UserDashboard = () => {
           )}
         </main>
       </div>
+
+      {/* Video Assessment Modal — full-screen overlay */}
+      {showVideoModal && (
+        <VideoAssessmentModal
+          questions={questionnaire}
+          onComplete={(result) => {
+            setShowVideoModal(false);
+            setTestResult(result);
+            loadTestHistory();
+          }}
+          onClose={() => setShowVideoModal(false)}
+        />
+      )}
     </div>
   );
 };

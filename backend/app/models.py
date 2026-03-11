@@ -21,6 +21,7 @@ class UserRegister(BaseModel):
     gender: str = Field(..., description="Gender (Male/Female/Other)")
     location: str = Field(..., min_length=2, description="City or location")
     has_previous_stress_issues: bool = Field(default=False)
+    phone_number: Optional[str] = Field(None, description="SMS-enabled phone number in E.164 format e.g. +919876543210")
     
     @validator('gender')
     def validate_gender(cls, v):
@@ -56,6 +57,7 @@ class DoctorRegister(BaseModel):
     state_medical_council: str
     specialization: str
     available_slots: List[str] = []
+    phone_number: Optional[str] = Field(None, description="SMS-enabled phone number in E.164 format e.g. +919876543210")
 
 class DoctorResponse(BaseModel):
     id: str
@@ -74,7 +76,6 @@ class DoctorResponse(BaseModel):
 # ============================================
 
 class TestSubmission(BaseModel):
-    user_id: str
     responses: List[int]
 
 class TestResponse(BaseModel):
@@ -92,7 +93,6 @@ class TestResponse(BaseModel):
 # ============================================
 
 class AppointmentCreate(BaseModel):
-    user_id: str
     doctor_id: str
     time_slot: str
     notes: Optional[str] = ""
@@ -118,6 +118,8 @@ class AppointmentUpdate(BaseModel):
 
 class TokenResponse(BaseModel):
     user: dict
+    access_token: str
+    token_type: str = "bearer"
     message: Optional[str] = None
 
 class OTPVerify(BaseModel):
@@ -302,7 +304,7 @@ class MedicalRecordResponse(BaseModel):
     record_name: str
     record_type: str
     file_name: str
-    file_path: str
+    file_path: Optional[str] = None
     file_size: int
     file_format: str
     description: Optional[str]
@@ -342,7 +344,6 @@ class MedicalRecordFilter(BaseModel):
 
 class TestResultAdd(BaseModel):
     """Add test result to medical record"""
-    user_id: str
     stress_test_id: str  # ID of the stress test from tests_collection
     add_to_medical_records: bool = True
     record_name: Optional[str] = None  # Custom name, defaults to "Stress Test - {date}"
@@ -396,11 +397,27 @@ class MedicalRecordStats(BaseModel):
     total_size_mb: float
     records_by_type: dict
     recent_uploads: int  # Last 30 days
-    stress_tests_linked: int
-    most_recent_upload: Optional[datetime]
-    storage_limit_mb: float
-    storage_used_mb: float
-    storage_percentage: float
+    stress_tests_linked: int = 0
+    most_recent_upload: Optional[datetime] = None
+    storage_limit_mb: float = 0.0
+    storage_used_mb: float = 0.0
+    storage_percentage: float = 0.0
+
+# ============================================
+# CHATBOT MODELS
+# ============================================
+
+class ChatbotMessage(BaseModel):
+    """Chatbot message request"""
+    user_id: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=1000)
+
+class ChatbotResponse(BaseModel):
+    """Chatbot response"""
+    response: str
+    detected_stress_level: Optional[int] = None  # 0=Low, 1=Moderate, 2=High, 3=Severe
+    detected_stress_label: Optional[str] = None
+    confidence: Optional[float] = None
 
 class RecordActivity(BaseModel):
     """Record activity log"""

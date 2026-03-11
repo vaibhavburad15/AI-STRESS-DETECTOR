@@ -1,15 +1,19 @@
 """
-FIXED main.py file
-Location: backend/app/main.py
-Action: REPLACE your existing backend/app/main.py with this entire file
+Application entry point.
 """
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from app.routes import auth_routes, user_routes, doctor_routes, admin_routes
-from app.database import init_admin
 import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+# Load environment variables before importing modules that read them at import time.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+from app.database import init_admin, close_mongo_connection
+from app.routes import auth_routes, user_routes, doctor_routes, admin_routes
 
 # Try to import medical records routes
 MEDICAL_RECORDS_ENABLED = False
@@ -27,11 +31,13 @@ app = FastAPI(
 )
 
 # CORS configuration
+# ✅ FIX: Add env variable for frontend URL, restrict CORS in production
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual frontend URL
+    allow_origins=allowed_origins,  # Specify actual frontend URL(s)
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -51,12 +57,18 @@ async def startup_event():
     """Initialize database on startup"""
     init_admin()
     print("🚀 Server started successfully!")
-    print("📊 Admin credentials: username='admin', password='admin123'")
+    # ✅ CRITICAL FIX: Don't print hardcoded admin credentials
+    # Admin password should be set via environment variable or secure admin creation flow
     
     # Create uploads directory if it doesn't exist (NEW)
     upload_dir = Path("uploads/medical_records")
     upload_dir.mkdir(parents=True, exist_ok=True)
     print(f"📁 Upload directory ready: {upload_dir}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close resources on shutdown."""
+    close_mongo_connection()
 
 @app.get("/")
 async def root():
@@ -75,9 +87,21 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - verifies database connectivity"""
+    # ✅ FIX: Actually check database health, not just return "healthy"
+    try:
+        from app.database import client
+        if client is not None:
+            client.admin.command('ping')
+            db_status = "connected"
+        else:
+            db_status = "unavailable"
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "connected" else "degraded",
+        "database": db_status,
         "medical_records": MEDICAL_RECORDS_ENABLED
     }
 

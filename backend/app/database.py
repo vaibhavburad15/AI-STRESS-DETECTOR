@@ -25,6 +25,7 @@ load_dotenv()
 
 # MongoDB connection
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/aistressdetector")
+client: MongoClient | None = None
 
 # ✅ OPTIMIZED: Create client with connection pooling and timeouts
 try:
@@ -45,6 +46,9 @@ try:
     print(f"✅ Connected to MongoDB: {MONGODB_URL}")
     
 except ServerSelectionTimeoutError as e:
+    if client is not None:
+        client.close()
+        client = None
     print(f"❌ Failed to connect to MongoDB: {e}")
     print("⚠️ Starting server without database connection...")
     db = None
@@ -61,6 +65,21 @@ class _MissingCollection:
             f"MongoDB is unavailable; cannot call '{method_name}' on "
             f"collection '{self.collection_name}'."
         )
+
+
+def close_mongo_connection() -> None:
+    """Close MongoDB client gracefully on app shutdown."""
+    global client
+    if client is None:
+        return
+
+    try:
+        client.close()
+        print("MongoDB connection closed")
+    except Exception as e:
+        print(f"Warning: Could not close MongoDB connection cleanly: {e}")
+    finally:
+        client = None
 
 # ============================================
 # COLLECTIONS
@@ -200,7 +219,7 @@ def create_indexes():
         progress_collection.create_index([
             ("user_id", ASCENDING),
             ("recommendation_id", ASCENDING)
-        ], background=True)
+        ], unique=True, background=True)
         progress_collection.create_index([("user_id", ASCENDING)], background=True)
         progress_collection.create_index([("status", ASCENDING)], background=True)
         progress_collection.create_index([("started_at", DESCENDING)], background=True)
@@ -271,7 +290,7 @@ def create_indexes():
 # ============================================
 
 def init_admin():
-    """Initialize default admin user"""
+    """Initialize default admin user (password from environment variable)"""
     if db is None:
         print("⚠️ No database connection - skipping admin initialization")
         return
@@ -284,13 +303,21 @@ def init_admin():
         existing_admin = admin_collection.find_one({"username": "admin"})
         
         if not existing_admin:
+            # ✅ CRITICAL FIX: Load admin password from environment, not hardcoded
+            admin_password = os.getenv("ADMIN_PASSWORD")
+            if not admin_password:
+                print("⚠️ WARNING: ADMIN_PASSWORD not set in environment variables!")
+                print("⚠️ Create admin with secure password by setting ADMIN_PASSWORD env var")
+                return
+            
             admin_collection.insert_one({
                 "username": "admin",
                 "email": "admin@stressanalyzer.com",
-                "password": get_password_hash("admin123"),
+                "password": get_password_hash(admin_password),
                 "role": "admin"
             })
-            print("✅ Default admin created (username: admin, password: admin123)")
+            print("✅ Default admin created (email: admin@stressanalyzer.com)")
+            print("⚠️ IMPORTANT: Change the default admin password after first login!")
         
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize admin: {e}")
@@ -458,9 +485,6 @@ def get_user_storage_used(user_id: str) -> float:
     total_bytes = sum(record.get("file_size", 0) for record in records)
     return total_bytes / (1024 * 1024)  # Convert to MB
 
-# ============================================
-# INITIALIZATION
-# ============================================
 
 # Create indexes on startup
 create_indexes()

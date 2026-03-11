@@ -100,3 +100,15 @@ export interface AdminStats {
     severe: number;
   };
 }
+
+export interface ChatbotMessage {
+  user_id: string;
+  message: string;
+}
+
+export interface ChatbotResponse {
+  response: string;
+  detected_stress_level?: number;
+  detected_stress_label?: string;
+  confidence?: number;
+}
