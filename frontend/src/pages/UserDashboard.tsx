@@ -430,7 +430,7 @@ const UserDashboard = () => {
                       className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-purple-500 px-7 py-3 text-base font-semibold text-white shadow hover:from-violet-700 hover:to-purple-600"
                     >
                       <Video className="h-5 w-5" />
-                      Video Interview
+                      Video Assessment
                     </button>
                   </div>
                 </article>

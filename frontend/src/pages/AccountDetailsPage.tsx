@@ -92,17 +92,15 @@ const AccountDetailsPage = () => {
 
     setSaving(true);
     try {
-      try {
-        await api.put(`/api/user/profile/${authService.getUser()?.id}`, {
-          name: editData.name,
-          age: editData.age,
-          gender: editData.gender,
-          location: editData.location,
-          has_previous_stress_issues: editData.hasPreviousStressIssues,
-        });
-      } catch { /* no endpoint yet */ }
+      const { data } = await api.put(`/api/user/profile/${authService.getUser()?.id}`, {
+        name: editData.name,
+        age: editData.age,
+        gender: editData.gender,
+        location: editData.location,
+        has_previous_stress_issues: editData.hasPreviousStressIssues,
+      });
       const currentUser = authService.getUser();
-      localStorage.setItem('user', JSON.stringify({ ...currentUser, ...editData, has_previous_stress_issues: editData.hasPreviousStressIssues }));
+      localStorage.setItem('user', JSON.stringify({ ...currentUser, ...data }));
       setProfile({ ...profile!, ...editData } as UserProfile);
       setEditing(false);
       setSuccess('Profile updated successfully!');

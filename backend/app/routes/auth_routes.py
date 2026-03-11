@@ -5,7 +5,7 @@ from bson import ObjectId
 from typing import Optional
 from ..models import (
     UserRegister, UserLogin, DoctorRegister, TokenResponse,
-    OTPVerify, ResendOTPRequest
+    OTPVerify, ResendOTPRequest, ChangePassword
 )
 from ..database import users_collection, doctors_collection, admin_collection
 from ..auth import verify_password, get_password_hash, require_role, create_access_token
@@ -450,3 +450,41 @@ async def login(credentials: UserLogin):
         user_response["nmc_profile"] = user.get("nmc_profile")
 
     return {"user": user_response, "access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/change-password")
+async def change_password(data: ChangePassword):
+    """Change user password after verifying current password"""
+    # Search across all collections
+    user = users_collection.find_one({"email": data.email})
+    collection = users_collection
+
+    if not user:
+        user = doctors_collection.find_one({"email": data.email})
+        collection = doctors_collection
+
+    if not user:
+        user = admin_collection.find_one({"email": data.email})
+        collection = admin_collection
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Verify current password
+    if not verify_password(data.current_password, user["password"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect"
+        )
+
+    # Hash and update new password
+    hashed_new = get_password_hash(data.new_password)
+    collection.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password": hashed_new, "updated_at": datetime.utcnow()}}
+    )
+
+    return {"message": "Password changed successfully"}

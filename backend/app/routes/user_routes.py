@@ -9,7 +9,7 @@ from ..models import (
     TestSubmission, TestResponse, AppointmentCreate, AppointmentResponse,
     GetEnhancedRecommendationsRequest, RecommendationProgressCreate,
     RecommendationProgressComplete, UserAchievementsResponse, ProgressUpdate,
-    ChatbotMessage, ChatbotResponse
+    ChatbotMessage, ChatbotResponse, ProfileUpdate
 )
 from ..database import (
     users_collection, tests_collection, appointments_collection, doctors_collection,
@@ -30,6 +30,79 @@ router = APIRouter(prefix="/api/user", tags=["User"])
 # Initialize progress tracker
 tracker = ProgressTracker(progress_collection)
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# USER PROFILE
+# ============================================
+
+@router.get("/profile/{user_id}")
+async def get_profile(user_id: str):
+    """Get user profile by ID"""
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    user = users_collection.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": str(user["_id"]),
+        "name": user.get("name", ""),
+        "email": user.get("email", ""),
+        "age": user.get("age", 0),
+        "gender": user.get("gender", ""),
+        "location": user.get("location", ""),
+        "has_previous_stress_issues": user.get("has_previous_stress_issues", False),
+        "created_at": user.get("created_at", ""),
+        "is_email_verified": user.get("email_verified", False),
+    }
+
+
+@router.put("/profile/{user_id}")
+async def update_profile(user_id: str, data: ProfileUpdate):
+    """Update user profile"""
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+    user = users_collection.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    update_fields = {}
+    if data.name is not None:
+        update_fields["name"] = data.name.strip()
+    if data.age is not None:
+        update_fields["age"] = data.age
+    if data.gender is not None:
+        if data.gender not in ["Male", "Female", "Other", "Prefer not to say"]:
+            raise HTTPException(status_code=400, detail="Invalid gender value")
+        update_fields["gender"] = data.gender
+    if data.location is not None:
+        update_fields["location"] = data.location.strip()
+    if data.has_previous_stress_issues is not None:
+        update_fields["has_previous_stress_issues"] = data.has_previous_stress_issues
+
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    update_fields["updated_at"] = datetime.utcnow()
+    users_collection.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$set": update_fields}
+    )
+
+    updated = users_collection.find_one({"_id": ObjectId(user_id)})
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found after update")
+    return {
+        "id": str(updated["_id"]),
+        "name": updated.get("name", ""),
+        "email": updated.get("email", ""),
+        "age": updated.get("age", 0),
+        "gender": updated.get("gender", ""),
+        "location": updated.get("location", ""),
+        "has_previous_stress_issues": updated.get("has_previous_stress_issues", False),
+        "created_at": updated.get("created_at", ""),
+        "is_email_verified": updated.get("email_verified", False),
+    }
 
 DEFAULT_GROQ_CHAT_MODELS = [
     "llama-3.3-70b-versatile",

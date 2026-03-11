@@ -129,6 +129,18 @@ class OTPVerify(BaseModel):
 class ResendOTPRequest(BaseModel):
     email: EmailStr
 
+class ChangePassword(BaseModel):
+    email: EmailStr
+    current_password: str
+    new_password: str = Field(..., min_length=8, description="New password must be at least 8 characters")
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    age: Optional[int] = Field(None, ge=13, le=120)
+    gender: Optional[str] = None
+    location: Optional[str] = None
+    has_previous_stress_issues: Optional[bool] = None
+
 # ============================================
 # ENHANCED RECOMMENDATION MODELS
 # ============================================
