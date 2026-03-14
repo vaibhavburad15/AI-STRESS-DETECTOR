@@ -112,3 +112,94 @@ export interface ChatbotResponse {
   detected_stress_label?: string;
   confidence?: number;
 }
+
+// ============================================
+// ADVANCED ML TYPES
+// ============================================
+
+export interface ShapFactor {
+  question: string;
+  label: string;
+  shap_value: number;
+  response_value: number;
+  impact: string;
+  importance?: number;
+}
+
+export interface StressExplanation {
+  top_factors: ShapFactor[];
+  method: string;
+}
+
+export interface CategoryScore {
+  average: number;
+  severity: string;
+  scores: number[];
+}
+
+export interface RiskFactor {
+  factor: string;
+  severity: string;
+  label: string;
+  message: string;
+  question?: string;
+}
+
+export interface StressTrend {
+  trend: string;
+  slope: number;
+  tests_analysed: number;
+  volatility: number;
+  recent_average: number;
+  predicted_next_level: number;
+  history: Array<{ stress_level: number; index: number }>;
+}
+
+export interface CrisisAction {
+  action: string;
+  message: string;
+  priority: string;
+}
+
+export interface CrisisData {
+  is_crisis: boolean;
+  severity: string;
+  reasons: string[];
+  recommended_actions: CrisisAction[];
+}
+
+export interface EnhancedTest extends Test {
+  continuous_score?: number;
+  probabilities?: Record<string, number>;
+  explanation?: StressExplanation;
+  category_scores?: Record<string, CategoryScore>;
+  risk_factors?: RiskFactor[];
+  trend?: StressTrend;
+  crisis?: CrisisData;
+}
+
+export interface UserAnalytics {
+  total_tests: number;
+  avg_stress_level: number;
+  best_level: string;
+  worst_level: string;
+  avg_days_between_tests: number;
+  category_trends: Record<string, number[]>;
+}
+
+export interface DoctorMatch {
+  doctor_id: string;
+  doctor_name: string;
+  specialization: string;
+  match_score: number;
+  reasons: string[];
+}
+
+export interface AdvancedAdminStats {
+  daily_trends: Array<{ date: string; count: number; avg_level: number }>;
+  by_location: Record<string, number>;
+  peak_hours: Record<string, number>;
+  age_groups: Record<string, number>;
+  doctor_effectiveness: Array<{ doctor_id: string; doctor_name: string; effectiveness: number }>;
+  crisis_count: number;
+}

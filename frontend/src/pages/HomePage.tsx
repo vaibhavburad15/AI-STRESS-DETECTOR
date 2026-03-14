@@ -15,15 +15,7 @@ const HomePage = () => {
       buttonIcon: Youtube,
       color: "blue"
     },
-    {
-      icon: Pill,
-      title: "Medicine use",
-      description: "Our Website also provides the Medicine Support. Medicine is the science and practice of caring for a patient, managing the diagnosis, prognosis, prevention, treatment, palliation of their injury or disease, and promoting their health",
-      action: () => window.open('https://www.apollopharmacy.in/', '_blank'),
-      buttonText: "Apollo Pharmacy",
-      buttonIcon: ExternalLink,
-      color: "purple"
-    },
+   
     {
       icon: Stethoscope,
       title: "Regular checkup",

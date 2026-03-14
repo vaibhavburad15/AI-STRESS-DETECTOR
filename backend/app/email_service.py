@@ -1,11 +1,4 @@
-"""
-OPTIMIZED email_service.py - WITH ASYNC EMAIL SENDING
-Location: backend/app/email_service.py
-Action: REPLACE your existing file with this one
 
-KEY CHANGE: All emails are now sent in background threads
-Result: Emails don't block HTTP responses (saves 20-30 seconds!)
-"""
 
 import smtplib
 from email.mime.text import MIMEText
@@ -430,6 +423,70 @@ class EmailService:
         """
         
         # Send async (non-blocking)
+        self._send_email_async(user_email, subject, body)
+
+
+    def send_crisis_alert_email(self, user_email: str, user_name: str, crisis_reasons: list):
+        """Send crisis alert email when severe stress is detected (ASYNC - non-blocking)"""
+        subject = "Important: Stress Crisis Alert - AI Stress Analyzer"
+
+        reasons_html = "".join(f"<li>{r}</li>" for r in crisis_reasons) if crisis_reasons else "<li>Consistently high stress levels detected</li>"
+
+        body = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+                          color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .alert-box {{ background: #fff5f5; border: 2px solid #e74c3c; padding: 20px;
+                             border-radius: 10px; margin: 20px 0; }}
+                .footer {{ text-align: center; margin-top: 30px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Crisis Alert</h1>
+                    <p>Your well-being matters to us</p>
+                </div>
+                <div class="content">
+                    <h2>Hi {user_name},</h2>
+                    <p>Our system has detected patterns that suggest you may be experiencing significant stress.</p>
+
+                    <div class="alert-box">
+                        <strong>What we noticed:</strong>
+                        <ul>{reasons_html}</ul>
+                    </div>
+
+                    <h3>Recommended Actions:</h3>
+                    <ul>
+                        <li>Speak with a mental health professional as soon as possible</li>
+                        <li>Use our appointment booking to connect with a verified doctor</li>
+                        <li>If you are in immediate danger, contact emergency services</li>
+                        <li>Reach out to a trusted friend or family member</li>
+                    </ul>
+
+                    <p><strong>Helpline Numbers:</strong></p>
+                    <ul>
+                        <li>NIMHANS Helpline: 080-46110007</li>
+                        <li>Vandrevala Foundation: 1860-2662-345</li>
+                        <li>iCall: 9152987821</li>
+                    </ul>
+
+                    <p>You are not alone. Please take care of yourself.</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; 2024 AI Stress Analyzer. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
         self._send_email_async(user_email, subject, body)
 
 

@@ -4,9 +4,11 @@ import pickle
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.calibration import CalibratedClassifierCV
 
 EXPECTED_FEATURE_COLUMNS = [f"q{i+1}" for i in range(18)]
 TARGET_COLUMN = "stress_level"
@@ -22,22 +24,18 @@ def generate_training_data(n_samples=1000):
     data = []
 
     for _ in range(n_samples):
-        # Generate responses (1-5) for 18 questions.
-        # Simulate patterns for different stress levels.
         stress_level = np.random.choice([0, 1, 2, 3], p=[0.25, 0.35, 0.25, 0.15])
 
-        if stress_level == 0:  # Low stress
+        if stress_level == 0:
             responses = np.random.randint(1, 3, size=18).tolist()
-        elif stress_level == 1:  # Moderate stress
+        elif stress_level == 1:
             responses = np.random.randint(2, 4, size=18).tolist()
-        elif stress_level == 2:  # High stress
+        elif stress_level == 2:
             responses = np.random.randint(3, 5, size=18).tolist()
-        else:  # Severe stress
+        else:
             responses = np.random.randint(4, 6, size=18).tolist()
 
-        # Add small randomness while keeping answers in range 1..5.
         responses = [min(5, max(1, r + np.random.randint(-1, 2))) for r in responses]
-
         data.append(responses + [stress_level])
 
     columns = EXPECTED_FEATURE_COLUMNS + [TARGET_COLUMN]
@@ -70,58 +68,82 @@ def load_training_data(dataset_path=None, fallback_samples=1000):
 
 
 def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
-    """Train Random Forest model for stress detection."""
+    """Train an ensemble model (RF + GBM + LR stacking) for stress detection."""
     model_dir = os.path.dirname(__file__)
     dataset_path = os.path.join(model_dir, dataset_filename) if dataset_filename else None
     df = load_training_data(dataset_path=dataset_path, fallback_samples=1000)
 
-    # Features and target
     X = df.drop(TARGET_COLUMN, axis=1)
     y = df[TARGET_COLUMN]
 
-    # Split data
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
     print(f"Training rows: {len(X_train)}, Test rows: {len(X_test)}")
-    print("Training Random Forest model...")
 
-    model = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=10,
-        random_state=42,
-        class_weight="balanced",
+    # --- Individual models ---
+    rf = RandomForestClassifier(
+        n_estimators=150, max_depth=12, random_state=42, class_weight="balanced",
     )
-    model.fit(X_train, y_train)
+    gbm = GradientBoostingClassifier(
+        n_estimators=150, max_depth=6, learning_rate=0.1, random_state=42,
+    )
+    lr = LogisticRegression(
+        max_iter=1000, random_state=42, class_weight="balanced", multi_class="multinomial",
+    )
 
-    y_pred = model.predict(X_test)
+    # --- Ensemble via soft voting ---
+    print("Training ensemble model (RF + GBM + LR)...")
+    ensemble = VotingClassifier(
+        estimators=[("rf", rf), ("gbm", gbm), ("lr", lr)],
+        voting="soft",
+        weights=[2, 2, 1],
+    )
+    ensemble.fit(X_train, y_train)
+
+    # --- Calibrate probabilities ---
+    print("Calibrating probabilities...")
+    calibrated = CalibratedClassifierCV(ensemble, cv=3, method="isotonic")
+    calibrated.fit(X_train, y_train)
+
+    y_pred = calibrated.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
 
+    # Cross-validation on the base ensemble
+    cv_scores = cross_val_score(ensemble, X, y, cv=5, scoring="accuracy")
+
     print("\nModel training complete.")
-    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Test Accuracy: {accuracy:.4f}")
+    print(f"5-Fold CV Accuracy: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
     print("\nClassification report:")
     print(
         classification_report(
-            y_test,
-            y_pred,
-            target_names=["Low", "Moderate", "High", "Severe"],
+            y_test, y_pred, target_names=["Low", "Moderate", "High", "Severe"],
         )
     )
 
+    # Feature importance from the RF sub-model
+    rf_model = ensemble.named_estimators_["rf"]
     feature_importance = pd.DataFrame(
         {
             "feature": [f"Question {i+1}" for i in range(18)],
-            "importance": model.feature_importances_,
+            "importance": rf_model.feature_importances_,
         }
     ).sort_values("importance", ascending=False)
 
     print("\nTop 5 most important questions:")
     print(feature_importance.head())
 
+    # --- Save the calibrated ensemble ---
     model_path = os.path.join(model_dir, "stress_model.pkl")
     with open(model_path, "wb") as file:
-        pickle.dump(model, file)
+        pickle.dump(calibrated, file)
+
+    # --- Save the bare RF for SHAP (TreeExplainer needs a tree model) ---
+    shap_model_path = os.path.join(model_dir, "stress_model_shap.pkl")
+    with open(shap_model_path, "wb") as file:
+        pickle.dump(rf_model, file)
 
     metadata = {
         "dataset_path": dataset_path if dataset_path and os.path.exists(dataset_path) else None,
@@ -130,20 +152,28 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
         "test_rows": int(len(X_test)),
         "features": EXPECTED_FEATURE_COLUMNS,
         "target": TARGET_COLUMN,
-        "model_type": type(model).__name__,
-        "n_estimators": int(model.n_estimators),
+        "model_type": "CalibratedEnsemble(RF+GBM+LR)",
+        "ensemble_weights": [2, 2, 1],
+        "rf_n_estimators": 150,
+        "gbm_n_estimators": 150,
         "random_state": 42,
         "accuracy": float(accuracy),
+        "cv_accuracy_mean": float(cv_scores.mean()),
+        "cv_accuracy_std": float(cv_scores.std()),
+        "feature_importance": {
+            f"q{i+1}": float(rf_model.feature_importances_[i]) for i in range(18)
+        },
     }
 
     metadata_path = os.path.join(model_dir, "stress_model_meta.json")
     with open(metadata_path, "w", encoding="utf-8") as file:
         json.dump(metadata, file, indent=2)
 
-    print(f"\nModel saved to: {model_path}")
+    print(f"\nEnsemble model saved to: {model_path}")
+    print(f"SHAP-compatible RF saved to: {shap_model_path}")
     print(f"Training metadata saved to: {metadata_path}")
 
-    return model
+    return calibrated
 
 
 if __name__ == "__main__":

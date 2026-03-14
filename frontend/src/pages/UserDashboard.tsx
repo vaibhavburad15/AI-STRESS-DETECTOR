@@ -21,9 +21,11 @@ import {
 import { authService } from '../services/api';
 import api from '../services/api';
 import type { Appointment, Doctor, Question, Test, ChatbotResponse } from '../types';
+import type { EnhancedTest } from '../types';
 import MedicalRecordsManager from '../components/MedicalRecordsManager';
 import AddTestToRecords from '../components/AddTestToRecords';
 import VideoAssessmentModal from '../components/VideoAssessmentModal';
+import StressExplanation from '../components/StressExplanation';
 
 type DashboardTab = 'test' | 'chatbot' | 'history' | 'appointments' | 'records';
 
@@ -75,7 +77,7 @@ const UserDashboard = () => {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [testStarted, setTestStarted] = useState(false);
   const [timeLeft, setTimeLeft] = useState(900);
-  const [testResult, setTestResult] = useState<Test | null>(null);
+  const [testResult, setTestResult] = useState<EnhancedTest | null>(null);
   const [testHistory, setTestHistory] = useState<Test[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -633,6 +635,22 @@ const UserDashboard = () => {
                   stressLabel={testResult.stress_label}
                   confidenceScore={testResult.confidence_score}
                   testDate={testResult.timestamp}
+                />
+              </div>
+
+              {/* Enhanced ML Explanation */}
+              <div className="mb-5">
+                <StressExplanation
+                  testId={testResult.id}
+                  testData={{
+                    explanation: testResult.explanation,
+                    category_scores: testResult.category_scores,
+                    risk_factors: testResult.risk_factors,
+                    continuous_score: testResult.continuous_score,
+                    probabilities: testResult.probabilities,
+                    trend: testResult.trend,
+                    crisis: testResult.crisis,
+                  }}
                 />
               </div>
               <div className="flex flex-wrap gap-3">

@@ -4,8 +4,12 @@ from typing import List
 from ..database import users_collection, doctors_collection, tests_collection, appointments_collection
 from ..auth import require_role
 from ..nmc_verification import build_nmc_profile
+from ..analytics_engine import create_analytics_engine
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+# Initialize analytics engine for admin
+admin_analytics = create_analytics_engine(tests_collection, users_collection, appointments_collection, doctors_collection)
 
 @router.get("/stats")
 async def get_admin_stats(current_user: dict = Depends(require_role(["admin"]))):
@@ -208,3 +212,13 @@ async def delete_doctor(doctor_id: str, current_user: dict = Depends(require_rol
     doctors_collection.delete_one({"_id": ObjectId(doctor_id)})
     
     return {"message": "Doctor and associated appointments deleted successfully"}
+
+
+@router.get("/analytics/advanced")
+async def get_advanced_analytics(current_user: dict = Depends(require_role(["admin"]))):
+    """Get advanced platform analytics including trends, demographics, doctor effectiveness"""
+    try:
+        stats = admin_analytics.get_advanced_stats()
+        return stats
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to compute analytics: {str(exc)}")

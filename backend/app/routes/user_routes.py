@@ -22,6 +22,8 @@ from ..progress_tracker import ProgressTracker
 from ..email_service import email_service
 from ..sms_service import sms_service
 from ..nmc_verification import build_nmc_profile
+from ..report_generator import report_generator
+from ..analytics_engine import create_analytics_engine
 import logging
 import groq
 import os
@@ -31,6 +33,8 @@ router = APIRouter(prefix="/api/user", tags=["User"])
 tracker = ProgressTracker(progress_collection)
 logger = logging.getLogger(__name__)
 
+# Initialize analytics engine
+analytics = create_analytics_engine(tests_collection, users_collection, appointments_collection, doctors_collection)
 
 # ============================================
 # USER PROFILE
@@ -277,68 +281,61 @@ async def convert_verbal_to_scores(verbal_responses: List[str]) -> List[int]:
         return [_keyword_score(ans, i) for i, ans in enumerate(verbal_responses)]
 
 
-@router.post("/video-test/submit", response_model=TestResponse)
+@router.post("/video-test/submit")
 async def submit_video_test(
     video_test: VideoTestSubmission,
     current_user: dict = Depends(require_role(["user"])),
 ):
-    """
-    Submit a video-based stress assessment.
-    Accepts 18 natural-language verbal responses, converts them to 1-5 scores
-    (via Groq if available, else keyword matching), runs the ML predictor,
-    and returns the same TestResponse format as the text assessment.
-    """
+    """Submit video-based stress assessment with full explainability."""
     user_id = current_user["user_id"]
 
     if len(video_test.verbal_responses) != 18:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Expected exactly 18 verbal responses",
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Expected exactly 18 verbal responses")
 
-    # Convert verbal answers → numeric scores
     scores = await convert_verbal_to_scores(video_test.verbal_responses)
 
-    # ML prediction
     try:
-        stress_level, stress_label, confidence, recommendations = predictor.predict(scores)
+        result = predictor.predict_with_explanation(scores)
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Prediction error: {str(exc)}",
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Prediction error: {str(exc)}")
 
-    # Persist
+    history = list(tests_collection.find({"user_id": user_id}).sort("timestamp", -1).limit(10))
+    trend_data = predictor.get_stress_trend(history)
+    crisis_data = predictor.check_crisis(user_id, history, result)
+
     test_dict = {
         "user_id": user_id,
         "responses": scores,
         "verbal_responses": video_test.verbal_responses,
         "assessment_type": "video",
-        "stress_level": int(stress_level),
-        "stress_label": stress_label,
-        "confidence_score": confidence,
-        "recommendations": recommendations,
+        "stress_level": int(result["stress_level"]),
+        "stress_label": result["stress_label"],
+        "confidence_score": result["confidence"],
+        "continuous_score": result["continuous_score"],
+        "recommendations": result["recommendations"],
+        "explanation": result["explanation"],
+        "category_scores": result["category_scores"],
+        "risk_factors": result["risk_factors"],
+        "probabilities": result["probabilities"],
+        "trend": trend_data,
+        "crisis": crisis_data,
         "timestamp": datetime.utcnow(),
     }
 
-    result = tests_collection.insert_one(test_dict)
-    test_id = str(result.inserted_id)
+    db_result = tests_collection.insert_one(test_dict)
+    test_id = str(db_result.inserted_id)
 
-    users_collection.update_one(
-        {"_id": ObjectId(user_id)},
-        {"$push": {"test_history": test_id}},
-    )
+    users_collection.update_one({"_id": ObjectId(user_id)}, {"$push": {"test_history": test_id}})
 
-    # Optional SMS notification (same as text test)
     try:
         submitting_user = users_collection.find_one({"_id": ObjectId(user_id)})
         if submitting_user and submitting_user.get("phone_number"):
             sms_service.send_stress_result_sms(
                 phone=submitting_user["phone_number"],
                 user_name=submitting_user["name"],
-                stress_label=stress_label,
-                confidence=confidence,
-                top_recommendations=recommendations[:3] if recommendations else [],
+                stress_label=result["stress_label"],
+                confidence=result["confidence"],
+                top_recommendations=result["recommendations"][:3] if result["recommendations"] else [],
             )
     except Exception as exc:
         logger.warning("Failed to send stress result SMS: %s", exc)
@@ -347,10 +344,17 @@ async def submit_video_test(
         "id": test_id,
         "user_id": user_id,
         "responses": scores,
-        "stress_level": int(stress_level),
-        "stress_label": stress_label,
-        "confidence_score": confidence,
-        "recommendations": recommendations,
+        "stress_level": int(result["stress_level"]),
+        "stress_label": result["stress_label"],
+        "confidence_score": result["confidence"],
+        "continuous_score": result["continuous_score"],
+        "probabilities": result["probabilities"],
+        "recommendations": result["recommendations"],
+        "explanation": result["explanation"],
+        "category_scores": result["category_scores"],
+        "risk_factors": result["risk_factors"],
+        "trend": trend_data,
+        "crisis": crisis_data,
         "timestamp": test_dict["timestamp"],
     }
 
@@ -359,76 +363,97 @@ async def submit_video_test(
 # STRESS TEST ENDPOINTS (ORIGINAL)
 # ============================================
 
-@router.post("/test/submit", response_model=TestResponse)
+@router.post("/test/submit")
 async def submit_test(test: TestSubmission, current_user: dict = Depends(require_role(["user"]))):
-    """Submit stress test and get ML-based prediction"""
-    # ✅ CRITICAL FIX: Use authenticated user_id, not client-provided
+    """Submit stress test and get ML-based prediction with SHAP explanation"""
     user_id = current_user["user_id"]
     
-    # Validate responses
     if len(test.responses) != 18:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Expected 18 responses"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Expected 18 responses")
     
     if not all(1 <= r <= 5 for r in test.responses):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="All responses must be between 1 and 5"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All responses must be between 1 and 5")
     
-    # Get ML prediction
+    # Get ML prediction with full explanation
     try:
-        stress_level, stress_label, confidence, recommendations = predictor.predict(test.responses)
+        result = predictor.predict_with_explanation(test.responses)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Prediction error: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Prediction error: {str(e)}")
     
-    # Save test result with authenticated user_id
+    # Get test history for trend & crisis
+    history = list(tests_collection.find({"user_id": user_id}).sort("timestamp", -1).limit(10))
+    trend_data = predictor.get_stress_trend(history)
+    crisis_data = predictor.check_crisis(user_id, history, result)
+    
+    # Save test result with enhanced data
     test_dict = {
-        "user_id": user_id,  # Use authenticated user, not test.user_id
+        "user_id": user_id,
         "responses": test.responses,
-        "stress_level": int(stress_level),
-        "stress_label": stress_label,
-        "confidence_score": confidence,
-        "recommendations": recommendations,
+        "stress_level": int(result["stress_level"]),
+        "stress_label": result["stress_label"],
+        "confidence_score": result["confidence"],
+        "continuous_score": result["continuous_score"],
+        "recommendations": result["recommendations"],
+        "explanation": result["explanation"],
+        "category_scores": result["category_scores"],
+        "risk_factors": result["risk_factors"],
+        "probabilities": result["probabilities"],
+        "trend": trend_data,
+        "crisis": crisis_data,
         "timestamp": datetime.utcnow()
     }
     
-    result = tests_collection.insert_one(test_dict)
-    test_id = str(result.inserted_id)
+    db_result = tests_collection.insert_one(test_dict)
+    test_id = str(db_result.inserted_id)
     
-    # Update user's test history
     users_collection.update_one(
         {"_id": ObjectId(user_id)},
         {"$push": {"test_history": test_id}}
     )
     
-    # ✅ SEND SMS STRESS RESULT
+    # Fetch user for notifications
+    submitting_user = users_collection.find_one({"_id": ObjectId(user_id)})
+
+    # Send SMS notification
     try:
-        submitting_user = users_collection.find_one({"_id": ObjectId(user_id)})
         if submitting_user and submitting_user.get("phone_number"):
             sms_service.send_stress_result_sms(
                 phone=submitting_user["phone_number"],
                 user_name=submitting_user["name"],
-                stress_label=stress_label,
-                confidence=confidence,
-                top_recommendations=recommendations[:3] if recommendations else []
+                stress_label=result["stress_label"],
+                confidence=result["confidence"],
+                top_recommendations=result["recommendations"][:3] if result["recommendations"] else []
             )
     except Exception as e:
-        print(f"⚠️ Failed to send stress result SMS: {e}")
+        print(f"Failed to send stress result SMS: {e}")
+
+    # Crisis email alert to user if detected
+    if crisis_data.get("is_crisis"):
+        try:
+            if submitting_user:
+                email_service.send_crisis_alert_email(
+                    user_email=submitting_user.get("email", ""),
+                    user_name=submitting_user.get("name", "User"),
+                    crisis_reasons=crisis_data.get("reasons", []),
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send crisis alert email: {e}")
 
     return {
         "id": test_id,
         "user_id": user_id,
         "responses": test.responses,
-        "stress_level": int(stress_level),
-        "stress_label": stress_label,
-        "confidence_score": confidence,
-        "recommendations": recommendations,
+        "stress_level": int(result["stress_level"]),
+        "stress_label": result["stress_label"],
+        "confidence_score": result["confidence"],
+        "continuous_score": result["continuous_score"],
+        "probabilities": result["probabilities"],
+        "recommendations": result["recommendations"],
+        "explanation": result["explanation"],
+        "category_scores": result["category_scores"],
+        "risk_factors": result["risk_factors"],
+        "trend": trend_data,
+        "crisis": crisis_data,
         "timestamp": test_dict["timestamp"]
     }
 
@@ -1103,3 +1128,148 @@ CONFIDENCE: [0.0-1.0]"""
     except Exception as e:
         logger.exception(f"Unexpected chatbot error for user_id={current_user.get('user_id')}")
         raise HTTPException(status_code=500, detail=f"Chatbot error: {str(e)}")
+
+
+# ============================================
+# EXPLAINABILITY & ADVANCED ML ENDPOINTS
+# ============================================
+
+@router.get("/test/{test_id}/explanation")
+async def get_test_explanation(test_id: str, current_user: dict = Depends(require_role(["user", "doctor", "admin"]))):
+    """Get SHAP explanation, category scores, and risk factors for a specific test"""
+    try:
+        ObjectId(test_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid test ID format")
+
+    test = tests_collection.find_one({"_id": ObjectId(test_id)})
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    if current_user["role"] == "user" and current_user["user_id"] != test["user_id"]:
+        raise HTTPException(status_code=403, detail="You can only access your own test results")
+
+    # Return stored explanation if present, otherwise recompute
+    if test.get("explanation"):
+        return {
+            "test_id": test_id,
+            "explanation": test["explanation"],
+            "category_scores": test.get("category_scores", {}),
+            "risk_factors": test.get("risk_factors", []),
+            "continuous_score": test.get("continuous_score"),
+            "probabilities": test.get("probabilities", {}),
+        }
+
+    # Recompute for older tests
+    try:
+        result = predictor.predict_with_explanation(test["responses"])
+        tests_collection.update_one(
+            {"_id": ObjectId(test_id)},
+            {"$set": {
+                "explanation": result["explanation"],
+                "category_scores": result["category_scores"],
+                "risk_factors": result["risk_factors"],
+                "continuous_score": result["continuous_score"],
+                "probabilities": result["probabilities"],
+            }},
+        )
+        return {
+            "test_id": test_id,
+            "explanation": result["explanation"],
+            "category_scores": result["category_scores"],
+            "risk_factors": result["risk_factors"],
+            "continuous_score": result["continuous_score"],
+            "probabilities": result["probabilities"],
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to compute explanation: {str(exc)}")
+
+
+@router.get("/test/{test_id}/report")
+async def get_test_report(test_id: str, current_user: dict = Depends(require_role(["user", "doctor"]))):
+    """Generate and return a PDF report for a specific test"""
+    from fastapi.responses import Response
+
+    try:
+        ObjectId(test_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid test ID format")
+
+    test = tests_collection.find_one({"_id": ObjectId(test_id)})
+    if not test:
+        raise HTTPException(status_code=404, detail="Test not found")
+
+    if current_user["role"] == "user" and current_user["user_id"] != test["user_id"]:
+        raise HTTPException(status_code=403, detail="You can only access your own test results")
+
+    user = users_collection.find_one({"_id": ObjectId(test["user_id"])})
+    user_name = user.get("name", "User") if user else "User"
+
+    try:
+        pdf_bytes = report_generator.generate_user_report(
+            user_data={"name": user_name},
+            test_result=test,
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="stress_report_{test_id}.pdf"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(exc)}")
+
+
+@router.get("/stress-trend/{user_id}")
+async def get_stress_trend(user_id: str, current_user: dict = Depends(require_role(["user", "doctor", "admin"]))):
+    """Get stress trend analysis for a user"""
+    if current_user["role"] == "user" and current_user["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="You can only access your own trends")
+
+    try:
+        ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    history = list(tests_collection.find({"user_id": user_id}).sort("timestamp", -1).limit(20))
+    trend = predictor.get_stress_trend(history)
+    return {"user_id": user_id, "trend": trend}
+
+
+@router.get("/analytics/{user_id}")
+async def get_user_analytics(user_id: str, current_user: dict = Depends(require_role(["user"]))):
+    """Get personal analytics for a user"""
+    if current_user["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="You can only access your own analytics")
+
+    try:
+        ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    try:
+        result = analytics.get_user_analytics(user_id)
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to compute analytics: {str(exc)}")
+
+
+@router.get("/doctor-match/{user_id}")
+async def get_doctor_match(user_id: str, current_user: dict = Depends(require_role(["user"]))):
+    """Get smart doctor recommendations based on stress profile"""
+    if current_user["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="You can only access your own doctor matches")
+
+    try:
+        ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    latest_test = tests_collection.find_one({"user_id": user_id}, sort=[("timestamp", -1)])
+    if not latest_test:
+        raise HTTPException(status_code=404, detail="No test results found. Take a test first.")
+
+    try:
+        matches = analytics.smart_doctor_match(user_id, latest_test)
+        return {"user_id": user_id, "recommended_doctors": matches}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to compute doctor matches: {str(exc)}")

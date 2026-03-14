@@ -200,4 +200,44 @@ export const medicalRecordsService = {
   },
 };
 
+// ============================================
+// ADVANCED ML / ANALYTICS SERVICES
+// ============================================
+
+export const explainabilityService = {
+  async getTestExplanation(testId: string): Promise<any> {
+    const { data } = await api.get(`/api/user/test/${testId}/explanation`);
+    return data;
+  },
+
+  async downloadReport(testId: string): Promise<Blob> {
+    const response = await api.get(`/api/user/test/${testId}/report`, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  async getStressTrend(userId: string): Promise<any> {
+    const { data } = await api.get(`/api/user/stress-trend/${userId}`);
+    return data;
+  },
+
+  async getUserAnalytics(userId: string): Promise<any> {
+    const { data } = await api.get(`/api/user/analytics/${userId}`);
+    return data;
+  },
+
+  async getDoctorMatch(userId: string): Promise<any> {
+    const { data } = await api.get(`/api/user/doctor-match/${userId}`);
+    return data;
+  },
+};
+
+export const adminAnalyticsService = {
+  async getAdvancedAnalytics(): Promise<any> {
+    const { data } = await api.get('/api/admin/analytics/advanced');
+    return data;
+  },
+};
+
 export default api;
