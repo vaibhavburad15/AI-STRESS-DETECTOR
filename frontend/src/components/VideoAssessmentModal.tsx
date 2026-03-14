@@ -33,6 +33,9 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
   const videoRef        = useRef<HTMLVideoElement>(null);
   const streamRef       = useRef<MediaStream | null>(null);
   const recognitionRef  = useRef<any>(null);
+  const answerStartMsRef = useRef<number>(0);
+  const answerDurationsRef = useRef<number[]>([]);
+  const answerWordCountsRef = useRef<number[]>([]);
 
   // Refs that shadow state — used inside stable callbacks to avoid stale closures
   const allResponsesRef = useRef<string[]>(Array(18).fill(''));
@@ -117,6 +120,7 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
   const startListening = useCallback(() => {
     transcriptRef.current = '';
     setTranscript('');
+    answerStartMsRef.current = Date.now();
     isRecordingRef.current = true;
     setIsRecording(true);
     setTimeLeft(ANSWER_TIME);
@@ -174,6 +178,9 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
 
     const qIdx   = currentQRef.current;
     const answer = transcriptRef.current.trim() || fallbackRef.current.trim() || 'no response';
+    const elapsedMs = Math.max(1000, Date.now() - (answerStartMsRef.current || Date.now()));
+    answerDurationsRef.current[qIdx] = elapsedMs;
+    answerWordCountsRef.current[qIdx] = answer.split(/\s+/).filter(Boolean).length;
     allResponsesRef.current[qIdx] = answer;
 
     if (qIdx < questions.length - 1) {
@@ -196,8 +203,32 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
       // ── All 18 questions done — submit ──
       setPhase('submitting');
       try {
+        const totalWords = answerWordCountsRef.current.reduce((a, b) => a + (b || 0), 0);
+        const totalMinutes = answerDurationsRef.current.reduce((a, b) => a + (b || 0), 0) / 60000;
+        const speakingRateWpm = totalMinutes > 0 ? totalWords / totalMinutes : 140;
+
+        const negativeLexicon = [
+          'sad', 'depressed', 'hopeless', 'anxious', 'worried', 'angry', 'overwhelmed',
+          'tired', 'panic', 'fear', 'stress', 'crying', 'hurt', 'pain', 'desperate'
+        ];
+        const joined = allResponsesRef.current.join(' ').toLowerCase();
+        const negHits = negativeLexicon.reduce((count, term) => count + (joined.includes(term) ? 1 : 0), 0);
+        const sentimentNegative = Math.min(1, negHits / 8);
+
+        const audioStress = Math.min(1, Math.max(0, Math.abs(speakingRateWpm - 140) / 80));
+
         const { data } = await api.post('/api/user/video-test/submit', {
           verbal_responses: allResponsesRef.current,
+          audio_features: {
+            speaking_rate_wpm: speakingRateWpm,
+            stress: audioStress,
+          },
+          facial_features: {
+            stress: 0.5,
+          },
+          sentiment_features: {
+            negative: sentimentNegative,
+          },
         });
         onComplete(data as Test);
       } catch (err: any) {

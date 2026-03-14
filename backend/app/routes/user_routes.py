@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from bson import ObjectId
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Optional
 import json as _json
 import re as _re
 from pydantic import BaseModel
@@ -17,6 +17,8 @@ from ..database import (
 )
 from ..auth import require_role
 from ml_model.predictor import predictor
+from ml_model.verbal_nn_scorer import verbal_nn_scorer
+from ml_model.multimodal_pipeline import multimodal_pipeline
 from ..recommendation_engine import enhanced_engine
 from ..progress_tracker import ProgressTracker
 from ..email_service import email_service
@@ -175,6 +177,9 @@ async def get_questionnaire():
 
 class VideoTestSubmission(BaseModel):
     verbal_responses: List[str]   # 18 natural-language answers
+    audio_features: Optional[Dict[str, float]] = None
+    facial_features: Optional[Dict[str, float]] = None
+    sentiment_features: Optional[Dict[str, float]] = None
 
 
 def _keyword_score(answer: str, question_index: int) -> int:
@@ -272,8 +277,15 @@ async def _convert_with_groq(verbal_responses: List[str]) -> List[int]:
 async def convert_verbal_to_scores(verbal_responses: List[str]) -> List[int]:
     """
     Convert 18 verbal answers to 1-5 scores.
-    Tries Groq first; falls back to keyword matching.
+    Tries local NN first; then Groq; falls back to keyword matching.
     """
+    try:
+        nn_result = verbal_nn_scorer.score_responses(verbal_responses)
+        if nn_result.get("avg_confidence", 0) >= 0.45:
+            return nn_result["scores"]
+    except Exception as exc:
+        logger.info("NN verbal scorer unavailable, using fallback chain: %s", exc)
+
     try:
         return await _convert_with_groq(verbal_responses)
     except Exception as exc:
@@ -292,7 +304,22 @@ async def submit_video_test(
     if len(video_test.verbal_responses) != 18:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Expected exactly 18 verbal responses")
 
-    scores = await convert_verbal_to_scores(video_test.verbal_responses)
+    multimodal_meta = {
+        "enabled": False,
+        "method": "fallback",
+    }
+    try:
+        mm_result = multimodal_pipeline.assess(
+            verbal_responses=video_test.verbal_responses,
+            audio_features=video_test.audio_features,
+            facial_features=video_test.facial_features,
+            sentiment_features=video_test.sentiment_features,
+        )
+        scores = mm_result["scores"]
+        multimodal_meta = mm_result.get("multimodal", multimodal_meta)
+    except Exception as exc:
+        logger.info("Multimodal pipeline unavailable, falling back to verbal scoring: %s", exc)
+        scores = await convert_verbal_to_scores(video_test.verbal_responses)
 
     try:
         result = predictor.predict_with_explanation(scores)
@@ -319,6 +346,7 @@ async def submit_video_test(
         "probabilities": result["probabilities"],
         "trend": trend_data,
         "crisis": crisis_data,
+        "multimodal": multimodal_meta,
         "timestamp": datetime.utcnow(),
     }
 
@@ -355,6 +383,7 @@ async def submit_video_test(
         "risk_factors": result["risk_factors"],
         "trend": trend_data,
         "crisis": crisis_data,
+        "multimodal": multimodal_meta,
         "timestamp": test_dict["timestamp"],
     }
 

@@ -6,6 +6,7 @@ Generates personalized, actionable recommendations based on user profile and str
 from typing import List, Dict, Any
 from datetime import datetime
 import random
+from ml_model.recommendation_ranker import recommendation_ranker
 
 class EnhancedRecommendationEngine:
     """Generate personalized, categorized, and actionable recommendations"""
@@ -44,6 +45,15 @@ class EnhancedRecommendationEngine:
             "resources": self._get_curated_resources(stress_level, user_data),
             "quick_wins": self._get_quick_wins(stress_level)
         }
+
+        # Re-rank actionable lists with NN personalization.
+        for key in ["immediate", "daily", "weekly", "lifestyle", "professional", "personalized"]:
+            recommendations[key] = recommendation_ranker.rank(
+                recommendations.get(key, []),
+                user_data=user_data,
+                stress_result=stress_result,
+                category=key,
+            )
         
         return recommendations
     

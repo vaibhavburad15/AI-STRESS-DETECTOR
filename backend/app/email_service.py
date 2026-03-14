@@ -459,16 +459,12 @@ class EmailService:
                     </ul>
 
                     <p><strong>Helpline Numbers:</strong></p>
-                    <ul>
-                        <li>NIMHANS Helpline: 080-46110007</li>
-                        <li>Vandrevala Foundation: 1860-2662-345</li>
-                        <li>iCall: 9152987821</li>
-                    </ul>
+                    
 
                     <p>You are not alone. Please take care of yourself.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; 2024 AI Stress Analyzer. All rights reserved.</p>
+                    <p>&copy; 2026 AI Stress Analyzer. All rights reserved.</p>
                 </div>
             </div>
         </body>

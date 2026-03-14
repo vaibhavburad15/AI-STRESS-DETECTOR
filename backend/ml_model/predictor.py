@@ -1,10 +1,12 @@
 import os
 import pickle
 import json
+import importlib
 from typing import List, Tuple, Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
+from .stress_forecaster import stress_forecaster
 
 # Question labels for SHAP explanations
 QUESTION_LABELS = {
@@ -85,7 +87,8 @@ class StressPredictor:
         Returns:
             Tuple of (stress_level, stress_label, confidence, recommendations)
         """
-        if self.model is None:
+        model = self.model
+        if model is None:
             raise Exception("Model not loaded. Please train the model first.")
 
         if len(responses) != 18:
@@ -96,8 +99,8 @@ class StressPredictor:
 
         X = pd.DataFrame([responses], columns=[f"q{i+1}" for i in range(18)])
 
-        prediction = int(self.model.predict(X)[0])
-        probabilities = self.model.predict_proba(X)[0]
+        prediction = int(model.predict(X)[0])
+        probabilities = model.predict_proba(X)[0]
         confidence = float(probabilities[prediction])
 
         stress_label = self.stress_labels[prediction]
@@ -111,8 +114,12 @@ class StressPredictor:
         Returns a dict with prediction, explainability data, risk factors, and continuous score.
         """
         prediction, stress_label, confidence, recommendations = self.predict(responses)
+        model = self.model
+        if model is None:
+            raise Exception("Model not loaded. Please train the model first.")
+
         X = pd.DataFrame([responses], columns=[f"q{i+1}" for i in range(18)])
-        probabilities = self.model.predict_proba(X)[0]
+        probabilities = model.predict_proba(X)[0]
 
         # --- Continuous stress score (0-100) ---
         # Weighted sum of class probabilities: Low=0, Moderate=33, High=66, Severe=100
@@ -145,8 +152,8 @@ class StressPredictor:
     def _compute_shap(self, X: pd.DataFrame, predicted_class: int) -> Dict[str, Any]:
         """Compute SHAP values for a single prediction."""
         try:
-            import shap
-        except ImportError:
+            shap_module = importlib.import_module("shap")
+        except Exception:
             return self._fallback_importance(X)
 
         tree_model = self.shap_model if self.shap_model is not None else None
@@ -155,7 +162,7 @@ class StressPredictor:
 
         try:
             if self.shap_explainer is None:
-                self.shap_explainer = shap.TreeExplainer(tree_model)
+                self.shap_explainer = shap_module.TreeExplainer(tree_model)
 
             shap_values = self.shap_explainer.shap_values(X)
 
@@ -327,11 +334,13 @@ class StressPredictor:
             return {"trend": "insufficient_data", "tests_analysed": len(test_history)}
 
         scores = []
-        timestamps = []
-        for t in test_history:
+        ordered_history = sorted(
+            test_history,
+            key=lambda t: t.get("timestamp") or 0,
+        )
+        for t in ordered_history:
             level = t.get("stress_level", 0)
             scores.append(level)
-            timestamps.append(t.get("timestamp"))
 
         # Linear trend via numpy polyfit
         x = np.arange(len(scores), dtype=float)
@@ -361,6 +370,7 @@ class StressPredictor:
             "volatility": round(volatility, 4),
             "recent_average": round(recent_avg, 2),
             "predicted_next_level": round(predicted_next, 2),
+            "forecast": stress_forecaster.forecast_levels(scores, horizon=3),
             "tests_analysed": len(scores),
             "history": [
                 {"stress_level": int(scores[i]), "index": i}
