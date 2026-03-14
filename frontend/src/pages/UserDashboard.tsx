@@ -307,12 +307,16 @@ const UserDashboard = () => {
     <div className="userdash-shell">
       <div className="userdash-layout">
         <aside className="userdash-sidebar hidden md:flex">
-          <button type="button"
-            onClick={() => navigate('/account')}
-              className="userdash-avatar hover:opacity-80 transition-opacity"
-               title="View Account Details">
-                <UserCircle2 className="h-8 w-8 text-white" />
-                </button>
+        <button type="button"
+          onClick={() => navigate('/account')}
+           className="userdash-avatar hover:opacity-80 transition-opacity"
+            title="View Account Details">
+            <span className="text-white font-bold text-sm">
+            {user?.name
+             ? user.name.split(' ').filter((w: string) => w.length > 0).map((w: string) => w[0].toUpperCase()).slice(0, 2).join('')
+             : 'U'}
+             </span>
+            </button>
           <nav className="mt-8 flex flex-col items-center gap-3">
             {tabs.map((tab) => {
               const Icon = tab.icon;

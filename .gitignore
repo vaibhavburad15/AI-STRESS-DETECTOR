@@ -48,6 +48,7 @@ stress/
 
 # Environment variables and secrets
 .env
+.env.example
 .env.*
 **/.env
 **/.env.*

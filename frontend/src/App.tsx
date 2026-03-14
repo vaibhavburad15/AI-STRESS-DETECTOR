@@ -11,7 +11,7 @@ import DoctorDashboard from './pages/DoctorDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import AppointmentsPage from './pages/AppointmentsPage';
 import AccountDetailsPage from './pages/AccountDetailsPage';
-
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRoles }: { children: JSX.Element; allowedRoles: string[] }) => {
   const user = authService.getUser();
@@ -35,6 +35,7 @@ function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/verify-otp" element={<OTPVerificationPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         
         <Route
           path="/user/dashboard"
