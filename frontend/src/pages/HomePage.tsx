@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Brain, Heart, Stethoscope, Users, Shield, TrendingUp, Activity, TestTube, Phone, Pill, MapPin, ExternalLink, Youtube } from 'lucide-react';
+import { Brain, Heart, Stethoscope, Users, Shield, TrendingUp, Activity, Youtube } from 'lucide-react';
 import stressLogo from '../../assets/stress logo.png';
 
 const HomePage = () => {

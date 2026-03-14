@@ -15,7 +15,6 @@ import {
   MessageCircle,
   ShieldCheck,
   Stethoscope,
-  UserCircle2,
   Video,
 } from 'lucide-react';
 import { authService } from '../services/api';

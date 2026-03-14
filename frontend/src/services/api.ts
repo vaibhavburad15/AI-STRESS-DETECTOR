@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AdvancedAdminStats } from '../types';
 
 // For TypeScript users, you may need to add this to vite-env.d.ts:
 // interface ImportMetaEnv {
@@ -16,6 +17,200 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+type AdvancedAnalyticsResponse = {
+  overview?: {
+    crisis_alerts_this_week?: unknown;
+  };
+  daily_trend?: Array<{
+    date?: unknown;
+    count?: unknown;
+    avg_stress?: unknown;
+    avg_level?: unknown;
+  }>;
+  daily_trends?: Array<{
+    date?: unknown;
+    count?: unknown;
+    avg_stress?: unknown;
+    avg_level?: unknown;
+  }>;
+  by_location?: Record<string, unknown> | Array<{
+    location?: unknown;
+    count?: unknown;
+  }>;
+  peak_hours?: Record<string, unknown> | Array<{
+    hour?: unknown;
+    count?: unknown;
+  }>;
+  by_age_group?: Array<{
+    age_range?: unknown;
+    count?: unknown;
+  }>;
+  age_groups?: Record<string, unknown>;
+  doctor_effectiveness?: Array<{
+    doctor_id?: unknown;
+    doctor_name?: unknown;
+    effectiveness?: unknown;
+    avg_improvement?: unknown;
+  }>;
+  crisis_count?: unknown;
+};
+
+const AGE_RANGE_LABELS: Record<string, string> = {
+  '0': '0-17',
+  '18': '18-24',
+  '25': '25-34',
+  '35': '35-49',
+  '50': '50-64',
+  '65': '65+',
+};
+
+const createEmptyAdvancedAdminStats = (): AdvancedAdminStats => ({
+  daily_trends: [],
+  by_location: {},
+  peak_hours: {},
+  age_groups: {},
+  doctor_effectiveness: [],
+  crisis_count: 0,
+});
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const toFiniteNumber = (value: unknown): number => {
+  const numericValue = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numericValue) ? numericValue : 0;
+};
+
+const normalizeDailyTrends = (
+  trends: AdvancedAnalyticsResponse['daily_trend'] | AdvancedAnalyticsResponse['daily_trends'],
+): AdvancedAdminStats['daily_trends'] => {
+  if (!Array.isArray(trends)) return [];
+
+  return trends.reduce<AdvancedAdminStats['daily_trends']>((acc, trend) => {
+    const rawDate = trend?.date;
+    if (typeof rawDate !== 'string' && typeof rawDate !== 'number') {
+      return acc;
+    }
+
+    acc.push({
+      date: String(rawDate),
+      count: toFiniteNumber(trend?.count),
+      avg_level: toFiniteNumber(trend?.avg_level ?? trend?.avg_stress),
+    });
+
+    return acc;
+  }, []);
+};
+
+const normalizeLocationCounts = (
+  locations: AdvancedAnalyticsResponse['by_location'],
+): AdvancedAdminStats['by_location'] => {
+  if (Array.isArray(locations)) {
+    return locations.reduce<Record<string, number>>((acc, location) => {
+      const rawLabel = location?.location;
+      const label =
+        typeof rawLabel === 'string' || typeof rawLabel === 'number'
+          ? String(rawLabel).trim() || 'Unknown'
+          : 'Unknown';
+
+      acc[label] = toFiniteNumber(location?.count);
+      return acc;
+    }, {});
+  }
+
+  if (!isRecord(locations)) return {};
+
+  return Object.entries(locations).reduce<Record<string, number>>((acc, [label, count]) => {
+    acc[label] = toFiniteNumber(count);
+    return acc;
+  }, {});
+};
+
+const normalizePeakHours = (
+  peakHours: AdvancedAnalyticsResponse['peak_hours'],
+): AdvancedAdminStats['peak_hours'] => {
+  if (Array.isArray(peakHours)) {
+    return peakHours.reduce<Record<string, number>>((acc, hourEntry) => {
+      const rawHour = hourEntry?.hour;
+      if (typeof rawHour !== 'string' && typeof rawHour !== 'number') {
+        return acc;
+      }
+
+      acc[String(rawHour)] = toFiniteNumber(hourEntry?.count);
+      return acc;
+    }, {});
+  }
+
+  if (!isRecord(peakHours)) return {};
+
+  return Object.entries(peakHours).reduce<Record<string, number>>((acc, [hour, count]) => {
+    acc[hour] = toFiniteNumber(count);
+    return acc;
+  }, {});
+};
+
+const normalizeAgeGroups = (
+  ageGroups: AdvancedAnalyticsResponse['age_groups'] | AdvancedAnalyticsResponse['by_age_group'],
+): AdvancedAdminStats['age_groups'] => {
+  if (Array.isArray(ageGroups)) {
+    return ageGroups.reduce<Record<string, number>>((acc, ageGroup) => {
+      const rawLabel = ageGroup?.age_range;
+      if (typeof rawLabel !== 'string' && typeof rawLabel !== 'number') {
+        return acc;
+      }
+
+      const label = AGE_RANGE_LABELS[String(rawLabel)] ?? String(rawLabel);
+      acc[label] = toFiniteNumber(ageGroup?.count);
+      return acc;
+    }, {});
+  }
+
+  if (!isRecord(ageGroups)) return {};
+
+  return Object.entries(ageGroups).reduce<Record<string, number>>((acc, [label, count]) => {
+    acc[label] = toFiniteNumber(count);
+    return acc;
+  }, {});
+};
+
+const normalizeDoctorEffectiveness = (
+  doctorEffectiveness: AdvancedAnalyticsResponse['doctor_effectiveness'],
+): AdvancedAdminStats['doctor_effectiveness'] => {
+  if (!Array.isArray(doctorEffectiveness)) return [];
+
+  return doctorEffectiveness.reduce<AdvancedAdminStats['doctor_effectiveness']>((acc, doctor) => {
+    const rawDoctorId = doctor?.doctor_id;
+    if (typeof rawDoctorId !== 'string' && typeof rawDoctorId !== 'number') {
+      return acc;
+    }
+
+    acc.push({
+      doctor_id: String(rawDoctorId),
+      doctor_name: typeof doctor?.doctor_name === 'string' ? doctor.doctor_name : 'Unknown',
+      effectiveness: toFiniteNumber(doctor?.effectiveness ?? doctor?.avg_improvement),
+    });
+
+    return acc;
+  }, []);
+};
+
+const normalizeAdvancedAnalytics = (payload: unknown): AdvancedAdminStats => {
+  if (!isRecord(payload)) return createEmptyAdvancedAdminStats();
+
+  const analytics = payload as AdvancedAnalyticsResponse;
+
+  return {
+    daily_trends: normalizeDailyTrends(analytics.daily_trends ?? analytics.daily_trend),
+    by_location: normalizeLocationCounts(analytics.by_location),
+    peak_hours: normalizePeakHours(analytics.peak_hours),
+    age_groups: normalizeAgeGroups(analytics.age_groups ?? analytics.by_age_group),
+    doctor_effectiveness: normalizeDoctorEffectiveness(analytics.doctor_effectiveness),
+    crisis_count: toFiniteNumber(
+      analytics.crisis_count ?? analytics.overview?.crisis_alerts_this_week,
+    ),
+  };
+};
 
 // ✅ FIX: Add JWT token to requests instead of X-User-ID
 api.interceptors.request.use((config) => {
@@ -234,9 +429,9 @@ export const explainabilityService = {
 };
 
 export const adminAnalyticsService = {
-  async getAdvancedAnalytics(): Promise<any> {
+  async getAdvancedAnalytics(): Promise<AdvancedAdminStats> {
     const { data } = await api.get('/api/admin/analytics/advanced');
-    return data;
+    return normalizeAdvancedAnalytics(data);
   },
 };
 

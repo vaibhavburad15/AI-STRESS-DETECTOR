@@ -116,6 +116,25 @@ const AdminDashboard = () => {
     navigate('/login');
   };
 
+  const crisisCount = advancedStats?.crisis_count ?? 0;
+  const dailyTrends = advancedStats?.daily_trends ?? [];
+  const byLocation = advancedStats?.by_location ?? {};
+  const ageGroups = advancedStats?.age_groups ?? {};
+  const doctorEffectiveness = advancedStats?.doctor_effectiveness ?? [];
+  const peakHours = advancedStats?.peak_hours ?? {};
+
+  const averageDailyTests = dailyTrends.length > 0
+    ? (dailyTrends.reduce((sum, day) => sum + day.count, 0) / dailyTrends.length).toFixed(1)
+    : '0';
+  const maxDailyTrendCount = Math.max(...dailyTrends.map((day) => day.count), 1);
+  const maxLocationCount = Math.max(...Object.values(byLocation), 1);
+  const maxAgeGroupCount = Math.max(...Object.values(ageGroups), 1);
+  const maxDoctorImprovement = Math.max(
+    ...doctorEffectiveness.map((doctor) => Math.abs(doctor.effectiveness)),
+    1
+  );
+  const maxPeakHourCount = Math.max(...Object.values(peakHours), 1);
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -453,34 +472,29 @@ const AdminDashboard = () => {
                   <div className="grid md:grid-cols-3 gap-4">
                     <div className="bg-red-50 rounded-lg p-6 text-center">
                       <p className="text-red-700 font-medium mb-2">Crisis Alerts</p>
-                      <p className="text-4xl font-bold text-red-600">{advancedStats.crisis_count}</p>
+                      <p className="text-4xl font-bold text-red-600">{crisisCount}</p>
                       <p className="text-xs text-red-500 mt-1">Users needing attention</p>
                     </div>
                     <div className="bg-blue-50 rounded-lg p-6 text-center">
                       <p className="text-blue-700 font-medium mb-2">Daily Tests (30d avg)</p>
-                      <p className="text-4xl font-bold text-blue-600">
-                        {advancedStats.daily_trends.length > 0
-                          ? (advancedStats.daily_trends.reduce((s, d) => s + d.count, 0) / Math.max(advancedStats.daily_trends.length, 1)).toFixed(1)
-                          : '0'}
-                      </p>
+                      <p className="text-4xl font-bold text-blue-600">{averageDailyTests}</p>
                     </div>
                     <div className="bg-purple-50 rounded-lg p-6 text-center">
                       <p className="text-purple-700 font-medium mb-2">Active Locations</p>
                       <p className="text-4xl font-bold text-purple-600">
-                        {Object.keys(advancedStats.by_location).length}
+                        {Object.keys(byLocation).length}
                       </p>
                     </div>
                   </div>
                 </div>
 
                 {/* Daily Trend (simple bar representation) */}
-                {advancedStats.daily_trends.length > 0 && (
+                {dailyTrends.length > 0 && (
                   <div className="bg-white rounded-xl shadow-md p-6">
                     <h3 className="text-xl font-bold mb-4">Daily Test Trends (Last 30 Days)</h3>
                     <div className="flex items-end gap-1 h-40 overflow-x-auto pb-6">
-                      {advancedStats.daily_trends.map((day, idx) => {
-                        const maxCount = Math.max(...advancedStats.daily_trends.map(d => d.count), 1);
-                        const height = (day.count / maxCount) * 100;
+                      {dailyTrends.map((day, idx) => {
+                        const height = (day.count / maxDailyTrendCount) * 100;
                         const levelColor = day.avg_level < 1 ? 'bg-emerald-400' : day.avg_level < 2 ? 'bg-amber-400' : day.avg_level < 2.5 ? 'bg-orange-400' : 'bg-red-400';
                         return (
                           <div key={idx} className="flex flex-col items-center flex-shrink-0" style={{ minWidth: '20px' }}>
@@ -506,10 +520,9 @@ const AdminDashboard = () => {
                   <div className="bg-white rounded-xl shadow-md p-6">
                     <h3 className="text-xl font-bold mb-4">Tests by Location</h3>
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {Object.entries(advancedStats.by_location)
+                      {Object.entries(byLocation)
                         .sort(([, a], [, b]) => b - a)
                         .map(([location, count]) => {
-                          const maxLoc = Math.max(...Object.values(advancedStats.by_location), 1);
                           return (
                             <div key={location}>
                               <div className="flex justify-between text-sm mb-1">
@@ -517,7 +530,7 @@ const AdminDashboard = () => {
                                 <span className="font-semibold">{count}</span>
                               </div>
                               <div className="h-2 bg-gray-100 rounded-full">
-                                <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(count / maxLoc) * 100}%` }} />
+                                <div className="h-full bg-blue-500 rounded-full" style={{ width: `${(count / maxLocationCount) * 100}%` }} />
                               </div>
                             </div>
                           );
@@ -528,10 +541,9 @@ const AdminDashboard = () => {
                   <div className="bg-white rounded-xl shadow-md p-6">
                     <h3 className="text-xl font-bold mb-4">Tests by Age Group</h3>
                     <div className="space-y-2">
-                      {Object.entries(advancedStats.age_groups)
+                      {Object.entries(ageGroups)
                         .sort(([a], [b]) => a.localeCompare(b))
                         .map(([group, count]) => {
-                          const maxAge = Math.max(...Object.values(advancedStats.age_groups), 1);
                           return (
                             <div key={group}>
                               <div className="flex justify-between text-sm mb-1">
@@ -539,7 +551,7 @@ const AdminDashboard = () => {
                                 <span className="font-semibold">{count}</span>
                               </div>
                               <div className="h-2 bg-gray-100 rounded-full">
-                                <div className="h-full bg-purple-500 rounded-full" style={{ width: `${(count / maxAge) * 100}%` }} />
+                                <div className="h-full bg-purple-500 rounded-full" style={{ width: `${(count / maxAgeGroupCount) * 100}%` }} />
                               </div>
                             </div>
                           );
@@ -549,22 +561,28 @@ const AdminDashboard = () => {
                 </div>
 
                 {/* Doctor Effectiveness */}
-                {advancedStats.doctor_effectiveness.length > 0 && (
+                {doctorEffectiveness.length > 0 && (
                   <div className="bg-white rounded-xl shadow-md p-6">
                     <h3 className="text-xl font-bold mb-4">Doctor Effectiveness</h3>
-                    <p className="text-sm text-gray-500 mb-4">Based on patient stress improvement after appointments</p>
+                    <p className="text-sm text-gray-500 mb-4">Based on average patient stress-level change after appointments</p>
                     <div className="space-y-3">
-                      {advancedStats.doctor_effectiveness.map((doc) => (
+                      {doctorEffectiveness.map((doc) => (
                         <div key={doc.doctor_id} className="flex items-center gap-4">
                           <span className="w-40 text-sm font-medium text-gray-700 truncate">{doc.doctor_name}</span>
                           <div className="flex-1 h-3 bg-gray-100 rounded-full">
                             <div
-                              className={`h-full rounded-full ${doc.effectiveness > 0 ? 'bg-emerald-500' : 'bg-red-400'}`}
-                              style={{ width: `${Math.min(Math.abs(doc.effectiveness) * 100, 100)}%` }}
+                              className={`h-full rounded-full ${
+                                doc.effectiveness > 0 ? 'bg-emerald-500' : doc.effectiveness < 0 ? 'bg-red-400' : 'bg-gray-300'
+                              }`}
+                              style={{ width: `${(Math.abs(doc.effectiveness) / maxDoctorImprovement) * 100}%` }}
                             />
                           </div>
-                          <span className={`text-sm font-semibold ${doc.effectiveness > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {doc.effectiveness > 0 ? '+' : ''}{(doc.effectiveness * 100).toFixed(0)}%
+                          <span
+                            className={`text-sm font-semibold ${
+                              doc.effectiveness > 0 ? 'text-emerald-600' : doc.effectiveness < 0 ? 'text-red-600' : 'text-gray-600'
+                            }`}
+                          >
+                            {doc.effectiveness > 0 ? '+' : ''}{doc.effectiveness.toFixed(2)} levels
                           </span>
                         </div>
                       ))}
@@ -573,14 +591,13 @@ const AdminDashboard = () => {
                 )}
 
                 {/* Peak Hours */}
-                {Object.keys(advancedStats.peak_hours).length > 0 && (
+                {Object.keys(peakHours).length > 0 && (
                   <div className="bg-white rounded-xl shadow-md p-6">
                     <h3 className="text-xl font-bold mb-4">Peak Testing Hours</h3>
                     <div className="flex items-end gap-1 h-32">
                       {Array.from({ length: 24 }, (_, h) => {
-                        const count = advancedStats.peak_hours[String(h)] || 0;
-                        const maxH = Math.max(...Object.values(advancedStats.peak_hours), 1);
-                        const height = (count / maxH) * 100;
+                        const count = peakHours[String(h)] || 0;
+                        const height = (count / maxPeakHourCount) * 100;
                         return (
                           <div key={h} className="flex flex-col items-center flex-1">
                             <div
