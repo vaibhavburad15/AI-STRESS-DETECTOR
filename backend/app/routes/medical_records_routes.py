@@ -164,7 +164,7 @@ async def upload_medical_record(
         try:
             import json
             tags_list = json.loads(tags)
-        except:
+        except (ValueError, TypeError):
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
     
     # Parse record date
@@ -172,7 +172,7 @@ async def upload_medical_record(
     if record_date:
         try:
             parsed_record_date = datetime.fromisoformat(record_date.replace('Z', '+00:00'))
-        except:
+        except (ValueError, TypeError):
             pass
     
     # Create medical record document
@@ -401,7 +401,7 @@ async def update_medical_record(
     if update.record_date:
         try:
             update_dict["record_date"] = datetime.fromisoformat(update.record_date.replace('Z', '+00:00'))
-        except:
+        except (ValueError, TypeError):
             pass
     if update.doctor_name is not None:
         update_dict["doctor_name"] = update.doctor_name

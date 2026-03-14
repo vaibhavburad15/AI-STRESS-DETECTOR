@@ -338,10 +338,27 @@ class ProgressTracker:
         return new_badges
     
     def _check_badge_requirement(self, requirement: str, stats: Dict) -> bool:
-        """Check if badge requirement is met"""
+        """Check if badge requirement is met using safe comparison parsing"""
+        import operator
+        import re
+        ops = {
+            ">=": operator.ge,
+            "<=": operator.le,
+            ">": operator.gt,
+            "<": operator.lt,
+            "==": operator.eq,
+        }
         try:
-            return eval(requirement, {"__builtins__": {}}, stats)
-        except:
+            for op_str, op_func in sorted(ops.items(), key=lambda x: -len(x[0])):
+                if op_str in requirement:
+                    parts = requirement.split(op_str, 1)
+                    if len(parts) == 2:
+                        var_name = parts[0].strip()
+                        threshold = parts[1].strip()
+                        if var_name in stats and re.fullmatch(r'\d+', threshold):
+                            return op_func(stats[var_name], int(threshold))
+            return False
+        except (ValueError, TypeError, KeyError):
             return False
     
     def add_meditation_minutes(self, user_id: str, minutes: int):

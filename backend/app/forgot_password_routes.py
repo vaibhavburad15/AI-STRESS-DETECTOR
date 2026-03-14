@@ -6,7 +6,7 @@ ALSO make sure your otp_service.py has the store_otp function using 10-minute ex
 """
 
 # ─── PASTE THESE IMPORTS at the top of auth_routes.py if not already there ───
-# from ..otp_service import generate_otp, store_otp, verify_otp
+# from ..otp_utils import generate_otp, store_otp, verify_otp
 # from ..sms_service import sms_service   # only if you want SMS; for email use email_service
 # from ..database import users_collection, doctors_collection
 # from pydantic import BaseModel, EmailStr
@@ -15,7 +15,8 @@ ALSO make sure your otp_service.py has the store_otp function using 10-minute ex
 
 from pydantic import BaseModel, EmailStr
 from fastapi import APIRouter, HTTPException, status
-from ..otp_service import generate_otp, store_otp, verify_otp
+from datetime import datetime
+from ..otp_utils import generate_otp, store_otp, verify_otp
 from ..database import users_collection, doctors_collection
 from .auth_routes import router  # re-use the existing router
 
@@ -96,7 +97,7 @@ async def verify_reset_otp(request: VerifyResetOTPRequest):
     """
     email = request.email.lower().strip()
 
-    from ..otp_service import otp_storage  # direct access to mark as verified
+    from ..otp_utils import otp_storage  # direct access to mark as verified
 
     if email not in otp_storage:
         raise HTTPException(
@@ -123,8 +124,9 @@ async def verify_reset_otp(request: VerifyResetOTPRequest):
             detail="Too many failed attempts. Please request a new OTP."
         )
 
-    # Check OTP value
-    if stored["otp"] != request.otp:
+    # Check OTP value (constant-time comparison to prevent timing attacks)
+    from hmac import compare_digest
+    if not compare_digest(stored["otp"], request.otp):
         stored["attempts"] = stored.get("attempts", 0) + 1
         remaining = 3 - stored["attempts"]
         raise HTTPException(
@@ -145,7 +147,7 @@ async def reset_password(request: ResetPasswordRequest):
     Step 3: User submits new password.
     We re-check the OTP is still marked as verified, then update the password.
     """
-    from ..otp_service import otp_storage
+    from ..otp_utils import otp_storage
     from ..auth import get_password_hash
     from bson import ObjectId
 
@@ -177,7 +179,7 @@ async def reset_password(request: ResetPasswordRequest):
         {"email": email},
         {"$set": {
             "password": hashed_password,
-            "password_updated_at": __import__('datetime').datetime.utcnow()
+            "password_updated_at": datetime.utcnow()
         }}
     )
 

@@ -12,6 +12,7 @@ from ..auth import verify_password, get_password_hash, require_role, create_acce
 from ..email_service import email_service
 from ..sms_service import sms_service
 from ..otp_utils import generate_otp, store_otp, verify_otp, otp_storage
+from hmac import compare_digest as _compare_digest
 from ..nmc_verification import (
     build_nmc_profile,
     get_state_medical_councils,
@@ -542,8 +543,8 @@ async def verify_reset_otp(request: VerifyResetOTPRequest):
             detail="Too many failed attempts. Please request a new OTP."
         )
 
-    # Check OTP value
-    if stored["otp"] != request.otp:
+    # Check OTP value (constant-time comparison to prevent timing attacks)
+    if not _compare_digest(stored["otp"], request.otp):
         stored["attempts"] = stored.get("attempts", 0) + 1
         remaining = 3 - stored["attempts"]
         raise HTTPException(

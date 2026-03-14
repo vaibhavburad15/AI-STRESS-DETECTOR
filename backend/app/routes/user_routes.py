@@ -1128,7 +1128,7 @@ CONFIDENCE: [0.0-1.0]"""
                 # Map level to label
                 labels = {0: "Low", 1: "Moderate", 2: "High", 3: "Severe"}
                 stress_label = labels.get(stress_level, "Unknown")
-            except:
+            except (ValueError, IndexError):
                 pass
         
         # Extract confidence
@@ -1136,7 +1136,7 @@ CONFIDENCE: [0.0-1.0]"""
             try:
                 conf_text = full_response.split("CONFIDENCE:")[1].split()[0].strip()
                 confidence = float(conf_text)
-            except:
+            except (ValueError, IndexError):
                 pass
         
         # Remove the stress assessment markers from the response

@@ -2,6 +2,7 @@ import random
 import string
 from datetime import datetime, timedelta
 from typing import Optional
+from hmac import compare_digest
 
 # In-memory storage for OTPs (use Redis in production)
 otp_storage = {}
@@ -42,8 +43,8 @@ def verify_otp(email: str, otp: str) -> Optional[dict]:
         del otp_storage[email]
         return None
     
-    # Check if OTP matches
-    if stored_data["otp"] != otp:
+    # Check if OTP matches (constant-time comparison to prevent timing attacks)
+    if not compare_digest(stored_data["otp"], otp):
         stored_data["attempts"] += 1
         return None
     

@@ -226,9 +226,13 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('user');
-      localStorage.removeItem('access_token');
-      window.location.href = '/login';
+      const url = error.config?.url || '';
+      const isAuthEndpoint = url.includes('/auth/');
+      if (!isAuthEndpoint) {
+        localStorage.removeItem('user');
+        localStorage.removeItem('access_token');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -329,7 +333,14 @@ export const authService = {
 
   getUser(): any | null {
     const userStr = localStorage.getItem('user');
-    return userStr ? JSON.parse(userStr) : null;
+    if (!userStr) return null;
+    try {
+      return JSON.parse(userStr);
+    } catch {
+      localStorage.removeItem('user');
+      localStorage.removeItem('access_token');
+      return null;
+    }
   },
 
   getToken(): string | null {

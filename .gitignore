@@ -1,26 +1,13 @@
-<<<<<<< HEAD
-# Python
-myenv/
-__pycache__/
-*.pyc
-
-# Node
-node_modules/
-
-# Build cachei8            
-.vite/
-
-# Environment files
-.env
-
-# VS Code
-.vscode/
-=======
 # OS / editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+.project
+.vim/
+*.swp
+*.swo
+*~
 
 # Python
 __pycache__/
@@ -48,7 +35,6 @@ stress/
 
 # Environment variables and secrets
 .env
-.env.example
 .env.*
 **/.env
 **/.env.*
@@ -60,13 +46,13 @@ node_modules/
 frontend/dist/
 dist/
 build/
+.vite/
 *.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# ✅ MEDIUM FIX: Exclude sensitive files and large generated artifacts
 # Medical documents and patient data
 uploads/
 backend/uploads/
@@ -82,14 +68,3 @@ backend/ml_model/trained_model*
 *.dump
 *.bak
 *.backup
-
-# IDE and OS specific
-.DS_Store
-.project
-*.swp
-*.swo
-*~
-.idea/
-.vscode/
-.vim/
->>>>>>> 4f0a4d2479fedccc0dbadc6bcfe70d1ed2f7935e

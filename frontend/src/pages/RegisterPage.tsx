@@ -98,8 +98,9 @@ const RegisterPage = () => {
 
     // User-specific validation
     if (userType === 'user') {
-      if (!formData.age || parseInt(formData.age) < 13 || parseInt(formData.age) > 120) {
-        setError('Age must be between 13 and 120');
+      const ageNum = Number(formData.age);
+      if (!formData.age || !Number.isInteger(ageNum) || ageNum < 13 || ageNum > 120) {
+        setError('Age must be a whole number between 13 and 120');
         return;
       }
       if (!formData.gender) {
