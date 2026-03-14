@@ -2,6 +2,8 @@
 Authentication utilities - JWT-based authentication.
 Provides secure JWT token creation, validation, and role-based access control.
 """
+from dotenv import load_dotenv
+load_dotenv()
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,7 +12,7 @@ from typing import Optional, List, Dict, Any
 import bcrypt
 import jwt
 from bson import ObjectId
-from dotenv import load_dotenv
+
 from fastapi import Header, HTTPException, status, Depends
 
 from .database import users_collection, doctors_collection, admin_collection

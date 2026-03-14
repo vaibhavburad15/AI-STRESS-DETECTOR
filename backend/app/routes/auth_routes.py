@@ -11,16 +11,18 @@ from ..database import users_collection, doctors_collection, admin_collection
 from ..auth import verify_password, get_password_hash, require_role, create_access_token
 from ..email_service import email_service
 from ..sms_service import sms_service
-from ..otp_utils import generate_otp, store_otp, verify_otp
+from ..otp_utils import generate_otp, store_otp, verify_otp, otp_storage
 from ..nmc_verification import (
     build_nmc_profile,
     get_state_medical_councils,
     verify_doctor_registration,
 )
+from pydantic import BaseModel, EmailStr
 import re
 import os
 import shutil
 from pathlib import Path
+
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 # Create uploads directory if it doesn't exist
@@ -33,6 +35,25 @@ def validate_license_number(license_number: str) -> bool:
     return bool(re.match(pattern, license_number.strip()))
 
 
+# ── Forgot Password Request Models ───────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class VerifyResetOTPRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXISTING ENDPOINTS
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.get("/doctor/state-medical-councils")
 async def get_doctor_state_medical_councils():
     """List supported state medical councils for NMC verification"""
@@ -42,7 +63,6 @@ async def get_doctor_state_medical_councils():
 async def register_user(user: UserRegister):
     """Register a new user - sends OTP for verification"""
     
-    # ✅ HIGH FIX: Check email uniqueness across ALL collections, not just users
     existing_user = users_collection.find_one({"email": user.email})
     if existing_user:
         raise HTTPException(
@@ -64,7 +84,6 @@ async def register_user(user: UserRegister):
             detail="Email already registered"
         )
     
-    # Create user document
     user_dict = {
         "name": user.name,
         "email": user.email,
@@ -81,11 +100,9 @@ async def register_user(user: UserRegister):
         "test_history": []
     }
     
-    # Insert user into database
     result = users_collection.insert_one(user_dict)
     user_id = str(result.inserted_id)
     
-    # Generate and send OTP
     otp = generate_otp()
     store_otp(user.email, otp, "user")
     email_service.send_otp_email(user.email, otp, "user")
@@ -104,7 +121,7 @@ async def register_user(user: UserRegister):
             "email_verified": False
         },
         "message": "Registration successful! Please check your email for the verification code.",
-        "access_token": "",  # Placeholder, not issued until email verified
+        "access_token": "",
         "token_type": "bearer"
     }
 
@@ -112,7 +129,6 @@ async def register_user(user: UserRegister):
 async def register_doctor(doctor: DoctorRegister):
     """Register a new doctor with NMC verification and admin approval workflow"""
     
-    # ✅ HIGH FIX: Check email uniqueness across ALL collections
     existing_doctor = doctors_collection.find_one({"email": doctor.email})
     if existing_doctor:
         raise HTTPException(
@@ -134,14 +150,12 @@ async def register_doctor(doctor: DoctorRegister):
             detail="Email already registered"
         )
     
-    # Validate license number format
     if not validate_license_number(doctor.license_number):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid registration/license number format."
         )
     
-    # Check if license number already exists
     existing_license = doctors_collection.find_one({
         "license_number": doctor.license_number.strip().upper()
     })
@@ -162,12 +176,8 @@ async def register_doctor(doctor: DoctorRegister):
             if "unavailable" in error_detail.lower()
             else status.HTTP_400_BAD_REQUEST
         )
-        raise HTTPException(
-            status_code=error_status,
-            detail=error_detail,
-        )
+        raise HTTPException(status_code=error_status, detail=error_detail)
     
-    # Create doctor document
     nmc_profile = build_nmc_profile(nmc_verification["details"])
     doctor_dict = {
         "name": doctor.name,
@@ -179,7 +189,7 @@ async def register_doctor(doctor: DoctorRegister):
         "available_slots": doctor.available_slots,
         "phone_number": doctor.phone_number or "",
         "role": "doctor",
-        "is_verified": False,  # Admin approval is still required
+        "is_verified": False,
         "nmc_verified": True,
         "nmc_verification": nmc_verification["details"],
         "nmc_profile": nmc_profile,
@@ -187,11 +197,9 @@ async def register_doctor(doctor: DoctorRegister):
         "created_at": datetime.utcnow()
     }
     
-    # Insert doctor into database
     result = doctors_collection.insert_one(doctor_dict)
     doctor_id = str(result.inserted_id)
     
-    # Generate and send OTP
     otp = generate_otp()
     store_otp(doctor.email, otp, "doctor")
     email_service.send_otp_email(doctor.email, otp, "doctor")
@@ -215,7 +223,7 @@ async def register_doctor(doctor: DoctorRegister):
             "Registration successful! NMC profile verified. "
             "Please verify your email for login; account will be activated after admin approval."
         ),
-        "access_token": "",  # Placeholder, not issued until email verified and admin approval
+        "access_token": "",
         "token_type": "bearer"
     }
 
@@ -223,7 +231,6 @@ async def register_doctor(doctor: DoctorRegister):
 async def verify_email_with_otp(request: OTPVerify):
     """Verify email using OTP"""
     
-    # Verify the OTP
     verification_result = verify_otp(request.email, request.otp)
     
     if not verification_result:
@@ -234,7 +241,6 @@ async def verify_email_with_otp(request: OTPVerify):
     
     user_type = verification_result["user_type"]
     
-    # Update user's email_verified status
     if user_type == "user":
         result = users_collection.update_one(
             {"email": request.email},
@@ -259,7 +265,6 @@ async def verify_email_with_otp(request: OTPVerify):
             detail="User not found"
         )
     
-    # Get updated user data
     user = collection.find_one({"email": request.email})
     
     if not user:
@@ -268,7 +273,6 @@ async def verify_email_with_otp(request: OTPVerify):
             detail="User not found"
         )
     
-    # Send welcome email + SMS
     email_service.send_welcome_email(request.email, user["name"], user_type)
     if user.get("phone_number"):
         sms_service.send_welcome_sms(user["phone_number"], user["name"], user_type)
@@ -296,26 +300,19 @@ async def verify_email_with_otp(request: OTPVerify):
 @router.post("/resend-otp")
 async def resend_otp(request: ResendOTPRequest):
     """Resend OTP to email"""
-    # ✅ LOW/MEDIUM FIX: Prevent email enumeration by always returning same response
     
-    # Check in users collection
     user = users_collection.find_one({"email": request.email})
     user_type = "user"
     
     if not user:
-        # Check in doctors collection
         user = doctors_collection.find_one({"email": request.email})
         user_type = "doctor"
     
-    # Always return same response regardless of whether email exists or is verified
-    # This prevents attackers from enumerating valid email addresses
     if user and not user.get("email_verified", False):
-        # Generate new OTP and send email
         otp = generate_otp()
         store_otp(request.email, otp, user_type)
         email_service.send_otp_email(request.email, otp, user_type)
     
-    # Always give same response to avoid enumeration
     return {"message": "If this email is registered and not yet verified, check your email for the verification code."}
 
 @router.post("/upload-medical-document")
@@ -323,15 +320,11 @@ async def upload_medical_document(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_role(["user"]))
 ):
-    """Upload medical document for authenticated user (can only upload for themselves)"""
+    """Upload medical document for authenticated user"""
     
-    # ✅ CRITICAL FIX: Authenticate user and ensure they can only upload for themselves
     user_id = current_user["user_id"]
-    
-    # Get filename safely
     filename = file.filename if file.filename else "document"
     
-    # Validate file type
     allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
     file_ext = os.path.splitext(filename)[1].lower()
     
@@ -341,7 +334,6 @@ async def upload_medical_document(
             detail=f"File type not allowed. Allowed types: {', '.join(allowed_extensions)}"
         )
     
-    # Validate file size (max 10MB)
     max_size = 10 * 1024 * 1024
     file.file.seek(0, 2)
     file_size = file.file.tell()
@@ -353,12 +345,10 @@ async def upload_medical_document(
             detail="File size exceeds 10MB limit"
         )
     
-    # Generate unique filename
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     safe_filename = f"{user_id}_{timestamp}{file_ext}"
     file_path = UPLOAD_DIR / safe_filename
     
-    # Save file
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -368,10 +358,9 @@ async def upload_medical_document(
             detail=f"Failed to save file: {str(e)}"
         )
     
-    # Update user document with file path
     users_collection.update_one(
         {"_id": ObjectId(user_id)},
-        {"$set": {"medical_document_path": safe_filename}}  # Store only filename, not full path
+        {"$set": {"medical_document_path": safe_filename}}
     )
     
     return {
@@ -381,9 +370,8 @@ async def upload_medical_document(
 
 @router.post("/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
-    """Login user (email must be verified) and return JWT token"""
+    """Login user and return JWT token"""
     
-    # Try to find user in different collections
     user = users_collection.find_one({"email": credentials.email})
     role: Optional[str] = "user" if user else None
     
@@ -395,21 +383,18 @@ async def login(credentials: UserLogin):
         user = admin_collection.find_one({"email": credentials.email})
         role = "admin" if user else None
     
-    # Check credentials
     if not user or not verify_password(credentials.password, user["password"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
     
-    # Check if email is verified (skip for admin)
     if role != "admin" and not user.get("email_verified", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Please verify your email before logging in. Check your inbox for the verification code."
         )
     
-    # ✅ HIGH FIX: Check if doctor is approved by admin before allowing login
     if role == "doctor" and not user.get("is_verified", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -423,11 +408,8 @@ async def login(credentials: UserLogin):
         )
     
     user_id = str(user["_id"])
-    
-    # Create JWT token
     access_token = create_access_token(user_id, role, credentials.email)
     
-    # Prepare user response
     user_response = {
         "id": user_id,
         "name": user.get("name", user.get("username")),
@@ -436,7 +418,6 @@ async def login(credentials: UserLogin):
         "email_verified": user.get("email_verified", True)
     }
     
-    # Add role-specific fields
     if role == "user":
         user_response.update({
             "age": user.get("age"),
@@ -455,7 +436,6 @@ async def login(credentials: UserLogin):
 @router.post("/change-password")
 async def change_password(data: ChangePassword):
     """Change user password after verifying current password"""
-    # Search across all collections
     user = users_collection.find_one({"email": data.email})
     collection = users_collection
 
@@ -473,14 +453,12 @@ async def change_password(data: ChangePassword):
             detail="User not found"
         )
 
-    # Verify current password
     if not verify_password(data.current_password, user["password"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Current password is incorrect"
         )
 
-    # Hash and update new password
     hashed_new = get_password_hash(data.new_password)
     collection.update_one(
         {"_id": user["_id"]},
@@ -488,3 +466,140 @@ async def change_password(data: ChangePassword):
     )
 
     return {"message": "Password changed successfully"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FORGOT PASSWORD ENDPOINTS (3 steps)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """
+    Step 1 — User submits their email.
+    Finds account, generates OTP, sends reset email.
+    """
+    email = request.email.lower().strip()
+
+    # Search users first, then doctors
+    user = users_collection.find_one({"email": email})
+    user_type = "user"
+
+    if not user:
+        user = doctors_collection.find_one({"email": email})
+        user_type = "doctor"
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account found with this email address."
+        )
+
+    # Generate OTP with 10-minute expiry (matches frontend countdown)
+    otp_code = generate_otp()
+    store_otp(email, otp_code, user_type)
+
+    # Send reset email (non-blocking)
+    email_service.send_reset_otp_email(email, otp_code, user.get("name", "User"))
+
+    # Dev fallback — prints OTP to terminal so you can test without email
+    print(f"🔑 PASSWORD RESET OTP for {email}: {otp_code}")
+
+    return {
+        "message": "Reset code sent successfully. Please check your email.",
+        "email": email
+    }
+
+
+@router.post("/verify-reset-otp")
+async def verify_reset_otp(request: VerifyResetOTPRequest):
+    """
+    Step 2 — User submits the 6-digit OTP.
+    Validates it and marks as verified.
+    NOTE: Does NOT delete OTP — step 3 needs to confirm it was verified.
+    """
+    email = request.email.lower().strip()
+    stored = otp_storage.get(email)
+
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP not found or expired. Please request a new one."
+        )
+
+    # Check expiry
+    if datetime.utcnow() > stored["expires_at"]:
+        del otp_storage[email]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP has expired. Please request a new one."
+        )
+
+    # Check attempt limit
+    if stored.get("attempts", 0) >= 3:
+        del otp_storage[email]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Too many failed attempts. Please request a new OTP."
+        )
+
+    # Check OTP value
+    if stored["otp"] != request.otp:
+        stored["attempts"] = stored.get("attempts", 0) + 1
+        remaining = 3 - stored["attempts"]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid OTP. {remaining} attempt(s) remaining."
+        )
+
+    # Mark as verified — keep in storage for step 3
+    stored["verified"] = True
+
+    return {"message": "OTP verified successfully.", "email": email}
+
+
+@router.post("/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    """
+    Step 3 — User submits new password.
+    Confirms OTP was verified, then updates password in DB.
+    """
+    email = request.email.lower().strip()
+
+    if len(request.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters long."
+        )
+
+    # Confirm OTP was verified in step 2
+    stored = otp_storage.get(email)
+    if not stored or not stored.get("verified"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OTP not verified. Please complete the verification step first."
+        )
+
+    # Hash new password
+    hashed = get_password_hash(request.new_password)
+
+    # Update in correct collection
+    collection = users_collection if stored.get("user_type") == "user" else doctors_collection
+    result = collection.update_one(
+        {"email": email},
+        {"$set": {
+            "password": hashed,
+            "password_updated_at": datetime.utcnow()
+        }}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found."
+        )
+
+    # Clean up OTP storage
+    if email in otp_storage:
+        del otp_storage[email]
+
+    return {"message": "Password reset successfully. You can now log in with your new password."}

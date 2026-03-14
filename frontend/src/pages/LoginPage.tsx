@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/api';
-import { Mail, Lock, ArrowRight, AlertCircle, Info, CheckCircle } from 'lucide-react';
+import { Mail, Lock, ArrowRight, AlertCircle, Info, CheckCircle, Eye, EyeOff } from 'lucide-react';
 import stressLogo from '../../assets/stress logo.png';
 
 const LoginPage = () => {
@@ -12,18 +12,20 @@ const LoginPage = () => {
   const [info, setInfo] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false); // ✅ NEW: eye toggle state
 
   useEffect(() => {
-    // Check for messages from navigation state
     if (location.state?.message) {
       setSuccess(location.state.message);
-      // Clear the message from history
       window.history.replaceState({}, document.title);
     }
   }, [location]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+    // Clear errors when user starts typing again
+    if (error) setError('');
+    if (info) setInfo('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -43,7 +45,6 @@ const LoginPage = () => {
       const response = await authService.login(formData.email, formData.password);
       authService.saveAuth(response);
 
-      // Navigate based on user role
       if (response.user.role === 'user') {
         navigate('/user/dashboard');
       } else if (response.user.role === 'doctor') {
@@ -55,15 +56,13 @@ const LoginPage = () => {
       const errorMessage = err.response?.data?.detail || 'Login failed. Please try again.';
       setError(errorMessage);
 
-      // Check if error is due to unverified email
-      if (errorMessage.includes('verify your email')) {
+      // ✅ FIXED: No auto-redirect on any error.
+      // Only show a manual link if email is not verified.
+      if (
+        errorMessage.toLowerCase().includes('verify your email') ||
+        errorMessage.toLowerCase().includes('verification')
+      ) {
         setInfo('Please verify your email first. Check your inbox for the verification code.');
-        // Redirect to OTP verification page
-        setTimeout(() => {
-          navigate('/verify-otp', {
-            state: { email: formData.email }
-          });
-        }, 2000);
       }
     } finally {
       setLoading(false);
@@ -73,9 +72,10 @@ const LoginPage = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center px-4">
       <div className="max-w-md w-full">
+
         {/* Header */}
         <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center ">
+          <div className="inline-flex items-center justify-center">
             <img
               src={stressLogo}
               alt="AI Stress Detector Logo"
@@ -91,6 +91,7 @@ const LoginPage = () => {
         {/* Login Form */}
         <div className="bg-white rounded-2xl shadow-2xl p-8 border border-gray-100">
           <form onSubmit={handleSubmit} className="space-y-5">
+
             {/* Success Message */}
             {success && (
               <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-start space-x-3">
@@ -107,14 +108,24 @@ const LoginPage = () => {
               </div>
             )}
 
-            {/* Info Message */}
+            {/* Info Message — only shown for unverified email, with manual button */}
             {info && (
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start space-x-3">
-                <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-blue-700">{info}</p>
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
+                <div className="flex items-start space-x-3">
+                  <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-blue-700">{info}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate('/verify-otp', { state: { email: formData.email } })}
+                  className="ml-8 text-sm font-semibold text-blue-600 underline hover:text-blue-800"
+                >
+                  Go to Email Verification →
+                </button>
               </div>
             )}
 
+            {/* Email */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
                 Email Address
@@ -133,6 +144,7 @@ const LoginPage = () => {
               </div>
             </div>
 
+            {/* Password with eye icon ✅ */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
                 Password
@@ -140,17 +152,27 @@ const LoginPage = () => {
               <div className="relative">
                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   name="password"
                   value={formData.password}
                   onChange={handleChange}
                   required
-                  className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
+                  className="w-full pl-12 pr-12 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all outline-none"
                   placeholder="••••••••"
                 />
+                {/* ✅ Eye icon toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(prev => !prev)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
 
+            {/* Remember me + Forgot password */}
             <div className="flex items-center justify-between text-sm">
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input
@@ -159,11 +181,17 @@ const LoginPage = () => {
                 />
                 <span className="text-gray-700">Remember me</span>
               </label>
-              <a href="#" className="text-blue-600 hover:text-blue-700 font-medium">
+              {/* ✅ FIXED: type="button" so it never submits the form */}
+              <button
+                type="button"
+                onClick={() => navigate('/forgot-password')}
+                className="text-blue-600 hover:text-blue-700 font-medium"
+              >
                 Forgot password?
-              </a>
+              </button>
             </div>
 
+            {/* Submit */}
             <button
               type="submit"
               disabled={loading}
@@ -180,6 +208,7 @@ const LoginPage = () => {
             <p className="text-gray-600">
               Don't have an account?{' '}
               <button
+                type="button"
                 onClick={() => navigate('/register')}
                 className="text-blue-600 hover:text-blue-700 font-semibold"
               >
@@ -190,6 +219,7 @@ const LoginPage = () => {
 
           <div className="mt-4 text-center">
             <button
+              type="button"
               onClick={() => navigate('/')}
               className="text-gray-500 hover:text-gray-700 text-sm flex items-center justify-center mx-auto space-x-1"
             >
@@ -210,6 +240,7 @@ const LoginPage = () => {
             <span>Data Protected</span>
           </div>
         </div>
+
       </div>
     </div>
   );
