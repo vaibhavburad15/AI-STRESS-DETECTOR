@@ -15,9 +15,10 @@ ALSO make sure your otp_service.py has the store_otp function using 10-minute ex
 
 from pydantic import BaseModel, EmailStr
 from fastapi import APIRouter, HTTPException, status
-from ..otp_service import generate_otp, store_otp, verify_otp
+from ..otp_utils import generate_otp, store_otp, verify_otp_for_reset, consume_verified_reset_otp
 from ..database import users_collection, doctors_collection
 from .auth_routes import router  # re-use the existing router
+from ..email_service import email_service
 
 # If you have a separate models file, add these classes there instead:
 class ForgotPasswordRequest(BaseModel):
@@ -64,21 +65,7 @@ async def forgot_password(request: ForgotPasswordRequest):
 
     # ── Send the OTP ──────────────────────────────────────────────────────────
     # Option A: Email (recommended)
-    try:
-        from ..email_service import send_reset_otp_email  # create this if needed
-        await send_reset_otp_email(email, otp_code, user.get("name", "User"))
-    except ImportError:
-        # Option B: SMS fallback (if you have sms_service)
-        try:
-            from ..sms_service import sms_service
-            phone = user.get("phone") or user.get("phone_number")
-            if phone:
-                sms_service.send_otp(phone, otp_code)
-        except Exception as sms_err:
-            print(f"SMS failed: {sms_err}")
-
-        # Option C: Just print to console during development
-        print(f"🔑 RESET OTP for {email}: {otp_code}")
+    email_service.send_reset_otp_email(email, otp_code, user.get("name", "User"))
 
     return {
         "message": "Reset code sent successfully. Please check your email.",
@@ -96,44 +83,29 @@ async def verify_reset_otp(request: VerifyResetOTPRequest):
     """
     email = request.email.lower().strip()
 
-    from ..otp_service import otp_storage  # direct access to mark as verified
-
-    if email not in otp_storage:
+    verify_result = verify_otp_for_reset(email, request.otp)
+    if not verify_result.get("ok"):
+        reason = verify_result.get("reason")
+        if reason == "expired":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP has expired. Please request a new one.",
+            )
+        if reason == "too_many_attempts":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Too many failed attempts. Please request a new OTP.",
+            )
+        if reason == "invalid":
+            remaining = int(verify_result.get("remaining", 0))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid OTP. {remaining} attempt(s) remaining.",
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP not found or expired. Please request a new one."
+            detail="OTP not found or expired. Please request a new one.",
         )
-
-    stored = otp_storage[email]
-
-    # Check expiry
-    from datetime import datetime
-    if datetime.utcnow() > stored["expires_at"]:
-        del otp_storage[email]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP has expired. Please request a new one."
-        )
-
-    # Check attempts
-    if stored.get("attempts", 0) >= 3:
-        del otp_storage[email]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Too many failed attempts. Please request a new OTP."
-        )
-
-    # Check OTP value
-    if stored["otp"] != request.otp:
-        stored["attempts"] = stored.get("attempts", 0) + 1
-        remaining = 3 - stored["attempts"]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid OTP. {remaining} attempt(s) remaining."
-        )
-
-    # Mark as verified (keep in storage so step 3 can use it)
-    stored["verified"] = True
 
     return {"message": "OTP verified successfully.", "email": email}
 
@@ -145,7 +117,6 @@ async def reset_password(request: ResetPasswordRequest):
     Step 3: User submits new password.
     We re-check the OTP is still marked as verified, then update the password.
     """
-    from ..otp_service import otp_storage
     from ..auth import get_password_hash
     from bson import ObjectId
 
@@ -158,9 +129,9 @@ async def reset_password(request: ResetPasswordRequest):
             detail="Password must be at least 8 characters long."
         )
 
-    # Check that OTP was verified in step 2
-    stored = otp_storage.get(email)
-    if not stored or not stored.get("verified"):
+    # Check that OTP was verified in step 2 and consume it atomically
+    otp_payload = consume_verified_reset_otp(email)
+    if not otp_payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OTP not verified. Please complete the verification step first."
@@ -170,7 +141,7 @@ async def reset_password(request: ResetPasswordRequest):
     hashed_password = get_password_hash(request.new_password)
 
     # Update password in the correct collection based on user_type
-    user_type = stored.get("user_type", "user")
+    user_type = otp_payload.get("user_type", "user")
     collection = users_collection if user_type == "user" else doctors_collection
 
     result = collection.update_one(
@@ -186,9 +157,5 @@ async def reset_password(request: ResetPasswordRequest):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
-
-    # Clean up OTP storage
-    if email in otp_storage:
-        del otp_storage[email]
 
     return {"message": "Password reset successfully. You can now log in with your new password."}

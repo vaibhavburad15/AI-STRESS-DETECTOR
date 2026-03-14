@@ -6,9 +6,12 @@ from email.mime.multipart import MIMEMultipart
 import os
 from dotenv import load_dotenv
 import threading
+import time
+import logging
 from typing import Optional
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class EmailService:
@@ -23,22 +26,34 @@ class EmailService:
 
     def _send_email_sync(self, to_email: str, subject: str, body: str):
         """Internal method to send email synchronously"""
-        try:
-            message = MIMEMultipart("alternative")
-            message["Subject"] = subject
-            message["From"] = self.sender_email
-            message["To"] = to_email
-            html_part = MIMEText(body, "html")
-            message.attach(html_part)
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.sender_email, self.sender_password)
-                server.send_message(message)
-            print(f"✅ Email sent to {to_email}: {subject}")
-            return True
-        except Exception as e:
-            print(f"❌ Failed to send email to {to_email}: {e}")
-            return False
+        retries = 3
+        for attempt in range(1, retries + 1):
+            try:
+                message = MIMEMultipart("alternative")
+                message["Subject"] = subject
+                message["From"] = self.sender_email
+                message["To"] = to_email
+                html_part = MIMEText(body, "html")
+                message.attach(html_part)
+                with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=20) as server:
+                    server.starttls()
+                    server.login(self.sender_email, self.sender_password)
+                    server.send_message(message)
+                logger.info("Email sent to %s: %s", to_email, subject)
+                return True
+            except (smtplib.SMTPException, OSError) as e:
+                logger.warning(
+                    "Email attempt %s/%s failed for %s: %s",
+                    attempt,
+                    retries,
+                    to_email,
+                    e,
+                )
+                if attempt < retries:
+                    time.sleep(attempt)
+
+        logger.error("Email delivery failed after retries for %s: %s", to_email, subject)
+        return False
 
     def _send_email_async(self, to_email: str, subject: str, body: str):
         """Send email in background thread (non-blocking)"""
@@ -48,7 +63,7 @@ class EmailService:
             daemon=True
         )
         thread.start()
-        print(f"📧 Email queued for {to_email}: {subject}")
+        logger.info("Email queued for %s: %s", to_email, subject)
 
     # ================================================================
     # PASSWORD RESET OTP  ← NEW METHOD

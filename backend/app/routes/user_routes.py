@@ -43,10 +43,14 @@ analytics = create_analytics_engine(tests_collection, users_collection, appointm
 # ============================================
 
 @router.get("/profile/{user_id}")
-async def get_profile(user_id: str):
+async def get_profile(user_id: str, current_user: dict = Depends(require_role(["user", "admin"]))):
     """Get user profile by ID"""
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    if current_user["role"] != "admin" and current_user["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this profile")
+
     user = users_collection.find_one({"_id": ObjectId(user_id)})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -64,10 +68,18 @@ async def get_profile(user_id: str):
 
 
 @router.put("/profile/{user_id}")
-async def update_profile(user_id: str, data: ProfileUpdate):
+async def update_profile(
+    user_id: str,
+    data: ProfileUpdate,
+    current_user: dict = Depends(require_role(["user", "admin"])),
+):
     """Update user profile"""
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    if current_user["role"] != "admin" and current_user["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this profile")
+
     user = users_collection.find_one({"_id": ObjectId(user_id)})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -121,7 +133,7 @@ def _groq_model_candidates() -> List[str]:
     configured_primary = os.getenv("GROQ_CHAT_MODEL", "").strip()
     configured_fallbacks = [
         model.strip()
-        for model in os.getenv("GROQ_CHAT_FALLBACK_MODELS", "").split(",")
+        for model in (os.getenv("GROQ_CHAT_FALLBACK_MODELS") or "").split(",")
         if model.strip()
     ]
 
@@ -226,7 +238,7 @@ async def _convert_with_groq(verbal_responses: List[str]) -> List[int]:
     """
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
-        raise ValueError("GROQ_API_KEY not set")
+        raise ValueError("GROQ_API_KEY not set or empty")
 
     client = groq.AsyncGroq(api_key=api_key)
 
@@ -1045,7 +1057,7 @@ async def chatbot_chat(chat_request: ChatbotMessage, current_user: dict = Depend
     """Chat with AI stress counselor that auto-detects stress levels"""
     try:
         # Initialize Groq client
-        api_key = os.getenv("GROQ_API_KEY")
+        api_key = os.getenv("GROQ_API_KEY", "").strip()
         if not api_key:
             raise HTTPException(status_code=500, detail="GROQ_API_KEY environment variable not set")
         
@@ -1128,7 +1140,7 @@ CONFIDENCE: [0.0-1.0]"""
                 # Map level to label
                 labels = {0: "Low", 1: "Moderate", 2: "High", 3: "Severe"}
                 stress_label = labels.get(stress_level, "Unknown")
-            except:
+            except (IndexError, ValueError, TypeError):
                 pass
         
         # Extract confidence
@@ -1136,7 +1148,7 @@ CONFIDENCE: [0.0-1.0]"""
             try:
                 conf_text = full_response.split("CONFIDENCE:")[1].split()[0].strip()
                 confidence = float(conf_text)
-            except:
+            except (IndexError, ValueError, TypeError):
                 pass
         
         # Remove the stress assessment markers from the response

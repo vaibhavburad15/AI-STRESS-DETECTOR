@@ -1,5 +1,6 @@
 import os
 import pickle
+import hashlib
 from typing import Any, Dict, List
 
 import numpy as np
@@ -16,11 +17,27 @@ class VerbalResponseNNScorer:
         self.model: Pipeline | None = None
         self._load_or_train()
 
+    @staticmethod
+    def _sha256_file(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(8192), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _load_pickle_with_integrity(self, path: str):
+        expected_hash = os.getenv("VERBAL_SCORER_SHA256", "").strip()
+        actual_hash = self._sha256_file(path)
+        if expected_hash and actual_hash.lower() != expected_hash.lower():
+            raise ValueError("Integrity check failed for verbal scorer model")
+
+        with open(path, "rb") as model_file:
+            return pickle.load(model_file)
+
     def _load_or_train(self) -> None:
         if os.path.exists(self.model_path):
             try:
-                with open(self.model_path, "rb") as f:
-                    self.model = pickle.load(f)
+                self.model = self._load_pickle_with_integrity(self.model_path)
                 return
             except Exception:
                 self.model = None

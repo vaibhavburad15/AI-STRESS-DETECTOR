@@ -14,9 +14,17 @@ import os
 import shutil
 import hashlib
 import mimetypes
+import logging
+import re
+import unicodedata
 from pathlib import Path
 import zipfile
 import io
+
+try:
+    import magic  # type: ignore
+except ImportError:
+    magic = None
 
 from ..models import (
     MedicalRecordUpload, MedicalRecordResponse, MedicalRecordUpdate,
@@ -30,6 +38,7 @@ from ..database import (
 from ..auth import require_role
 
 router = APIRouter(prefix="/api/medical-records", tags=["Medical Records"])
+logger = logging.getLogger(__name__)
 
 # Configuration
 UPLOAD_DIR = Path("uploads/medical_records")
@@ -69,6 +78,44 @@ def validate_file(file: UploadFile) -> tuple:
             status_code=400,
             detail=f"File type not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
         )
+
+    # Validate content with MIME detection when python-magic is available.
+    header = file.file.read(8)
+    file.file.seek(0)
+    sample = file.file.read(2048)
+    file.file.seek(0)
+    mime_type = None
+
+    if magic is not None:
+        try:
+            mime_type = magic.Magic(mime=True).from_buffer(sample)
+        except Exception as exc:
+            logger.warning("python-magic failed, using signature fallback: %s", exc)
+
+    allowed_mimes = {
+        ".pdf": {"application/pdf"},
+        ".jpg": {"image/jpeg"},
+        ".jpeg": {"image/jpeg"},
+        ".png": {"image/png"},
+        ".doc": {"application/msword", "application/octet-stream"},
+        ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip"},
+    }
+
+    if mime_type and mime_type not in allowed_mimes.get(file_ext, set()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid MIME type '{mime_type}' for {file_ext} file",
+        )
+
+    # Fallback signature checks for environments without libmagic.
+    if file_ext == ".pdf" and not header.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="Invalid PDF content")
+    if file_ext in {".jpg", ".jpeg"} and not header.startswith(b"\xff\xd8\xff"):
+        raise HTTPException(status_code=400, detail="Invalid JPEG content")
+    if file_ext == ".png" and header != b"\x89PNG\r\n\x1a\n":
+        raise HTTPException(status_code=400, detail="Invalid PNG content")
+    if file_ext == ".docx" and not header.startswith(b"PK"):
+        raise HTTPException(status_code=400, detail="Invalid DOCX content")
     
     # Check file size
     file.file.seek(0, 2)
@@ -142,7 +189,10 @@ async def upload_medical_record(
     # Generate unique filename - FIXED: Handle None filename
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     filename_for_hash = file.filename if file.filename else "unnamed_file"
-    safe_filename = f"{user_id}_{timestamp}_{hashlib.md5(filename_for_hash.encode()).hexdigest()[:8]}{file_ext}"
+    normalized_name = unicodedata.normalize("NFKD", filename_for_hash)
+    ascii_name = normalized_name.encode("ascii", "ignore").decode("ascii")
+    clean_name = re.sub(r"[^A-Za-z0-9._-]", "_", ascii_name).strip("._") or "unnamed_file"
+    safe_filename = f"{user_id}_{timestamp}_{hashlib.md5(clean_name.encode()).hexdigest()[:8]}{file_ext}"
     file_path = UPLOAD_DIR / safe_filename
     
     # Save file
@@ -164,7 +214,7 @@ async def upload_medical_record(
         try:
             import json
             tags_list = json.loads(tags)
-        except:
+        except (ValueError, TypeError, AttributeError):
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
     
     # Parse record date
@@ -172,8 +222,8 @@ async def upload_medical_record(
     if record_date:
         try:
             parsed_record_date = datetime.fromisoformat(record_date.replace('Z', '+00:00'))
-        except:
-            pass
+        except ValueError:
+            logger.warning("Invalid record_date format received: %s", record_date)
     
     # Create medical record document
     record_dict = {
@@ -401,8 +451,8 @@ async def update_medical_record(
     if update.record_date:
         try:
             update_dict["record_date"] = datetime.fromisoformat(update.record_date.replace('Z', '+00:00'))
-        except:
-            pass
+        except ValueError:
+            logger.warning("Invalid update.record_date format received: %s", update.record_date)
     if update.doctor_name is not None:
         update_dict["doctor_name"] = update.doctor_name
     if update.hospital_name is not None:

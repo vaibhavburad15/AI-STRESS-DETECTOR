@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -12,6 +13,14 @@ from sklearn.calibration import CalibratedClassifierCV
 
 EXPECTED_FEATURE_COLUMNS = [f"q{i+1}" for i in range(18)]
 TARGET_COLUMN = "stress_level"
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def generate_training_data(n_samples=1000):
@@ -145,6 +154,9 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
     with open(shap_model_path, "wb") as file:
         pickle.dump(rf_model, file)
 
+    model_sha256 = _sha256_file(model_path)
+    shap_model_sha256 = _sha256_file(shap_model_path)
+
     metadata = {
         "dataset_path": dataset_path if dataset_path and os.path.exists(dataset_path) else None,
         "total_rows": int(len(df)),
@@ -160,6 +172,8 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
         "accuracy": float(accuracy),
         "cv_accuracy_mean": float(cv_scores.mean()),
         "cv_accuracy_std": float(cv_scores.std()),
+        "model_sha256": model_sha256,
+        "shap_model_sha256": shap_model_sha256,
         "feature_importance": {
             f"q{i+1}": float(rf_model.feature_importances_[i]) for i in range(18)
         },

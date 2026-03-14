@@ -2,6 +2,7 @@ import os
 import pickle
 import json
 import importlib
+import hashlib
 from typing import List, Tuple, Dict, Any, Optional
 
 import numpy as np
@@ -43,6 +44,40 @@ class StressPredictor:
         }
         self.load_model()
 
+    @staticmethod
+    def _sha256_file(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(8192), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _expected_hash(self, key: str) -> str:
+        meta_hash = ""
+        meta_path = os.path.join(os.path.dirname(__file__), "stress_model_meta.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as meta_file:
+                    meta = json.load(meta_file)
+                meta_hash = str(meta.get(key, "") or "").strip()
+            except Exception:
+                meta_hash = ""
+
+        env_key = {
+            "model_sha256": "STRESS_MODEL_SHA256",
+            "shap_model_sha256": "STRESS_SHAP_MODEL_SHA256",
+        }.get(key, "")
+        env_hash = os.getenv(env_key, "").strip() if env_key else ""
+        return env_hash or meta_hash
+
+    def _load_pickle_with_integrity(self, path: str, expected_hash: str = ""):
+        actual_hash = self._sha256_file(path)
+        if expected_hash and actual_hash.lower() != expected_hash.lower():
+            raise ValueError(f"Integrity check failed for {path}")
+
+        with open(path, "rb") as file:
+            return pickle.load(file)
+
     def load_model(self):
         """Load the trained model, retraining automatically if the pickle is invalid."""
         if not os.path.exists(self.model_path):
@@ -51,8 +86,8 @@ class StressPredictor:
             return
 
         try:
-            with open(self.model_path, "rb") as file:
-                self.model = pickle.load(file)
+            expected = self._expected_hash("model_sha256")
+            self.model = self._load_pickle_with_integrity(self.model_path, expected)
             print("ML model loaded successfully")
         except Exception as exc:
             print(f"Failed to load ML model from {self.model_path}: {exc}")
@@ -66,8 +101,8 @@ class StressPredictor:
         """Load the tree-based sub-model used for SHAP explanations."""
         if os.path.exists(self.shap_model_path):
             try:
-                with open(self.shap_model_path, "rb") as f:
-                    self.shap_model = pickle.load(f)
+                expected = self._expected_hash("shap_model_sha256")
+                self.shap_model = self._load_pickle_with_integrity(self.shap_model_path, expected)
                 print("SHAP tree model loaded successfully")
             except Exception as exc:
                 print(f"Could not load SHAP model: {exc}")

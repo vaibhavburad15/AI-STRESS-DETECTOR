@@ -54,7 +54,23 @@ class AnalyticsEngine:
                 "from": "users",
                 "let": {"uid": "$user_id"},
                 "pipeline": [
-                    {"$match": {"$expr": {"$eq": [{"$toString": "$_id"}, "$$uid"]}}},
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$eq": [
+                                    "$_id",
+                                    {
+                                        "$convert": {
+                                            "input": "$$uid",
+                                            "to": "objectId",
+                                            "onError": None,
+                                            "onNull": None,
+                                        }
+                                    },
+                                ]
+                            }
+                        }
+                    },
                     {"$project": {"location": 1}},
                 ],
                 "as": "user_info",
@@ -86,7 +102,23 @@ class AnalyticsEngine:
                 "from": "users",
                 "let": {"uid": "$user_id"},
                 "pipeline": [
-                    {"$match": {"$expr": {"$eq": [{"$toString": "$_id"}, "$$uid"]}}},
+                    {
+                        "$match": {
+                            "$expr": {
+                                "$eq": [
+                                    "$_id",
+                                    {
+                                        "$convert": {
+                                            "input": "$$uid",
+                                            "to": "objectId",
+                                            "onError": None,
+                                            "onNull": None,
+                                        }
+                                    },
+                                ]
+                            }
+                        }
+                    },
                     {"$project": {"age": 1}},
                 ],
                 "as": "user_info",

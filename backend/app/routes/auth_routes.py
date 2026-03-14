@@ -11,7 +11,13 @@ from ..database import users_collection, doctors_collection, admin_collection
 from ..auth import verify_password, get_password_hash, require_role, create_access_token
 from ..email_service import email_service
 from ..sms_service import sms_service
-from ..otp_utils import generate_otp, store_otp, verify_otp, otp_storage
+from ..otp_utils import (
+    generate_otp,
+    store_otp,
+    verify_otp,
+    verify_otp_for_reset,
+    consume_verified_reset_otp,
+)
 from ..nmc_verification import (
     build_nmc_profile,
     get_state_medical_councils,
@@ -31,7 +37,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 def validate_license_number(license_number: str) -> bool:
     """Validate doctor registration/license number format"""
-    pattern = r"^[A-Za-z0-9/\-]{4,30}$"
+    pattern = r"^[A-Za-z0-9\-]{4,30}$"
     return bool(re.match(pattern, license_number.strip()))
 
 
@@ -496,7 +502,7 @@ async def forgot_password(request: ForgotPasswordRequest):
 
     # Generate OTP with 10-minute expiry (matches frontend countdown)
     otp_code = generate_otp()
-    store_otp(email, otp_code, user_type)
+    store_otp(email, otp_code, user_type, expires_in_minutes=10)
 
     # Send reset email (non-blocking)
     email_service.send_reset_otp_email(email, otp_code, user.get("name", "User"))
@@ -518,41 +524,30 @@ async def verify_reset_otp(request: VerifyResetOTPRequest):
     NOTE: Does NOT delete OTP — step 3 needs to confirm it was verified.
     """
     email = request.email.lower().strip()
-    stored = otp_storage.get(email)
+    result = verify_otp_for_reset(email, request.otp)
 
-    if not stored:
+    if not result.get("ok"):
+        reason = result.get("reason")
+        if reason == "expired":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP has expired. Please request a new one.",
+            )
+        if reason == "too_many_attempts":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Too many failed attempts. Please request a new OTP.",
+            )
+        if reason == "invalid":
+            remaining = int(result.get("remaining", 0))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid OTP. {remaining} attempt(s) remaining.",
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP not found or expired. Please request a new one."
+            detail="OTP not found or expired. Please request a new one.",
         )
-
-    # Check expiry
-    if datetime.utcnow() > stored["expires_at"]:
-        del otp_storage[email]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP has expired. Please request a new one."
-        )
-
-    # Check attempt limit
-    if stored.get("attempts", 0) >= 3:
-        del otp_storage[email]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Too many failed attempts. Please request a new OTP."
-        )
-
-    # Check OTP value
-    if stored["otp"] != request.otp:
-        stored["attempts"] = stored.get("attempts", 0) + 1
-        remaining = 3 - stored["attempts"]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid OTP. {remaining} attempt(s) remaining."
-        )
-
-    # Mark as verified — keep in storage for step 3
-    stored["verified"] = True
 
     return {"message": "OTP verified successfully.", "email": email}
 
@@ -571,9 +566,9 @@ async def reset_password(request: ResetPasswordRequest):
             detail="Password must be at least 8 characters long."
         )
 
-    # Confirm OTP was verified in step 2
-    stored = otp_storage.get(email)
-    if not stored or not stored.get("verified"):
+    # Confirm OTP was verified in step 2, and consume it atomically
+    otp_payload = consume_verified_reset_otp(email)
+    if not otp_payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="OTP not verified. Please complete the verification step first."
@@ -583,7 +578,7 @@ async def reset_password(request: ResetPasswordRequest):
     hashed = get_password_hash(request.new_password)
 
     # Update in correct collection
-    collection = users_collection if stored.get("user_type") == "user" else doctors_collection
+    collection = users_collection if otp_payload.get("user_type") == "user" else doctors_collection
     result = collection.update_one(
         {"email": email},
         {"$set": {
@@ -597,9 +592,5 @@ async def reset_password(request: ResetPasswordRequest):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
-
-    # Clean up OTP storage
-    if email in otp_storage:
-        del otp_storage[email]
 
     return {"message": "Password reset successfully. You can now log in with your new password."}

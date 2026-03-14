@@ -5,7 +5,13 @@ Tracks user progress, awards badges, manages streaks, and calculates achievement
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
+import logging
+import operator
+import re
 from pydantic import BaseModel
+
+
+logger = logging.getLogger(__name__)
 
 class RecommendationProgress(BaseModel):
     """Track individual recommendation completion"""
@@ -340,8 +346,30 @@ class ProgressTracker:
     def _check_badge_requirement(self, requirement: str, stats: Dict) -> bool:
         """Check if badge requirement is met"""
         try:
-            return eval(requirement, {"__builtins__": {}}, stats)
-        except:
+            match = re.fullmatch(r"\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(>=|<=|==|>|<)\s*(-?\d+)\s*", requirement)
+            if not match:
+                return False
+
+            key, op_token, threshold_raw = match.groups()
+            if key not in stats:
+                return False
+
+            ops = {
+                ">=": operator.ge,
+                "<=": operator.le,
+                ">": operator.gt,
+                "<": operator.lt,
+                "==": operator.eq,
+            }
+            threshold = int(threshold_raw)
+            value = int(stats.get(key, 0))
+            op_func = ops.get(op_token)
+            return bool(op_func and op_func(value, threshold))
+        except (TypeError, ValueError) as exc:
+            logger.warning("Invalid badge requirement '%s': %s", requirement, exc)
+            return False
+        except Exception as exc:
+            logger.exception("Unexpected badge requirement error for '%s': %s", requirement, exc)
             return False
     
     def add_meditation_minutes(self, user_id: str, minutes: int):
@@ -402,7 +430,7 @@ class ProgressTracker:
                 upsert=True
             )
         except Exception as e:
-            print(f"⚠️ Failed to update achievement field {field}: {e}")
+            logger.exception("Failed to update achievement field %s: %s", field, e)
     
     def get_leaderboard(self, limit: int = 10) -> List[Dict]:
         """Get top users by points"""

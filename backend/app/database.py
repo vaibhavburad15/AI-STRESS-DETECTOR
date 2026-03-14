@@ -138,6 +138,13 @@ reminders_collection: Collection[dict[str, Any]] = (
     else cast(Collection[dict[str, Any]], _MissingCollection("reminders"))
 )
 
+# OTP collection (persistent with TTL)
+otp_collection: Collection[dict[str, Any]] = (
+    db["otps"]
+    if db is not None
+    else cast(Collection[dict[str, Any]], _MissingCollection("otps"))
+)
+
 # Medical Records Management
 medical_records_collection: Collection[dict[str, Any]] = (
     db["medical_records"]
@@ -234,6 +241,14 @@ def create_indexes():
         achievements_collection.create_index([("level", DESCENDING)], background=True)
         achievements_collection.create_index([("streak_days", DESCENDING)], background=True)
         print("  ✅ Achievement indexes created")
+
+        # ============================================
+        # OTP INDEXES
+        # ============================================
+        otp_collection.create_index([("email", ASCENDING)], unique=True, background=True)
+        otp_collection.create_index([("created_at", DESCENDING)], background=True)
+        otp_collection.create_index([("expires_at", ASCENDING)], expireAfterSeconds=0, background=True)
+        print("  ✅ OTP indexes created")
         
         # ============================================
         # MEDICAL RECORDS INDEXES (CRITICAL FOR PERFORMANCE)

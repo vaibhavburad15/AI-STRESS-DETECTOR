@@ -3,7 +3,9 @@ Application entry point.
 """
 
 import os
+import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -15,13 +17,37 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 from app.database import init_admin, close_mongo_connection
 from app.routes import auth_routes, user_routes, doctor_routes, admin_routes
 
+logger = logging.getLogger(__name__)
+
 # Try to import medical records routes
 MEDICAL_RECORDS_ENABLED = False
 try:
     from app.routes import medical_records_routes
-    MEDICAL_RECORDS_ENABLED = True
-except ImportError as e:
-    print(f"⚠️ Medical records routes not found - feature disabled: {e}")
+    if hasattr(medical_records_routes, "router"):
+        MEDICAL_RECORDS_ENABLED = True
+except (ImportError, AttributeError) as e:
+    logger.warning("Medical records routes disabled: %s", e)
+
+
+def _get_allowed_origins() -> list[str]:
+    origins_raw = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173")
+    valid_origins: list[str] = []
+
+    for origin in origins_raw.split(","):
+        candidate = origin.strip().rstrip("/")
+        if not candidate:
+            continue
+
+        parsed = urlparse(candidate)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            valid_origins.append(candidate)
+        else:
+            logger.warning("Ignoring invalid CORS origin: %s", candidate)
+
+    if not valid_origins:
+        valid_origins = ["http://localhost:3000"]
+
+    return valid_origins
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -32,7 +58,7 @@ app = FastAPI(
 
 # CORS configuration
 # ✅ FIX: Add env variable for frontend URL, restrict CORS in production
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+allowed_origins = _get_allowed_origins()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,  # Specify actual frontend URL(s)
