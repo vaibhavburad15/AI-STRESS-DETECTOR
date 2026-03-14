@@ -6,6 +6,8 @@ Tracks user progress, awards badges, manages streaks, and calculates achievement
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel
+import operator
+import re
 
 class RecommendationProgress(BaseModel):
     """Track individual recommendation completion"""
@@ -339,8 +341,6 @@ class ProgressTracker:
     
     def _check_badge_requirement(self, requirement: str, stats: Dict) -> bool:
         """Check if badge requirement is met using safe comparison parsing"""
-        import operator
-        import re
         ops = {
             ">=": operator.ge,
             "<=": operator.le,
