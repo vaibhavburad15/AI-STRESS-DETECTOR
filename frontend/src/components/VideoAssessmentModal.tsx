@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import type { Question, Test } from '../types';
+import { BrowserAudioFeatureRecorder } from '../utils/audioFeatureRecorder';
 
 interface Props {
   questions: Question[];
@@ -32,6 +33,7 @@ const CATEGORY_COLOR: Record<string, string> = {
 export default function VideoAssessmentModal({ questions, onComplete, onClose }: Props) {
   const videoRef        = useRef<HTMLVideoElement>(null);
   const streamRef       = useRef<MediaStream | null>(null);
+  const audioRecorderRef = useRef<BrowserAudioFeatureRecorder | null>(null);
   const recognitionRef  = useRef<any>(null);
   const answerStartMsRef = useRef<number>(0);
   const answerDurationsRef = useRef<number[]>([]);
@@ -73,6 +75,14 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
+      try {
+        const recorder = new BrowserAudioFeatureRecorder();
+        await recorder.init(stream);
+        audioRecorderRef.current = recorder;
+      } catch (recorderError) {
+        console.warn('Browser audio feature capture is unavailable:', recorderError);
+        audioRecorderRef.current = null;
+      }
       setPhase('intro');
     } catch {
       setError(
@@ -122,6 +132,7 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
     setTranscript('');
     answerStartMsRef.current = Date.now();
     isRecordingRef.current = true;
+    audioRecorderRef.current?.startSegment();
     setIsRecording(true);
     setTimeLeft(ANSWER_TIME);
 
@@ -157,6 +168,7 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
 
   const stopListening = useCallback(() => {
     isRecordingRef.current = false;
+    audioRecorderRef.current?.stopSegment();
     setIsRecording(false);
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch { /* ignore */ }
@@ -164,7 +176,7 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
     }
   }, []);
 
-  // ── Core interview flow ─────────────────────────────────────────────────────
+  // ── Core assignment flow ────────────────────────────────────────────────────
   /**
    * Save the current answer and advance to the next question (or submit if last).
    * Uses refs throughout to avoid stale-closure issues inside the timer effect.
@@ -216,13 +228,18 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
         const sentimentNegative = Math.min(1, negHits / 8);
 
         const audioStress = Math.min(1, Math.max(0, Math.abs(speakingRateWpm - 140) / 80));
+        const browserAudioFeatures =
+          (await audioRecorderRef.current?.finalize({
+            speaking_rate_wpm: speakingRateWpm,
+            stress: audioStress,
+          })) ?? {
+            speaking_rate_wpm: speakingRateWpm,
+            stress: audioStress,
+          };
 
         const { data } = await api.post('/api/user/video-test/submit', {
           verbal_responses: allResponsesRef.current,
-          audio_features: {
-            speaking_rate_wpm: speakingRateWpm,
-            stress: audioStress,
-          },
+          audio_features: browserAudioFeatures,
           facial_features: {
             stress: 0.5,
           },
@@ -243,14 +260,14 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
   }, [questions, speak, startListening, stopListening, onComplete]);
 
   /** Starts the intro speech then jumps directly into Q1. */
-  const startInterview = useCallback(async () => {
+  const startAssignment = useCallback(async () => {
     currentQRef.current  = 0;
     advancingRef.current = false;
     setCurrentQ(0);
 
     setPhase('ai-speaking');
     await speak(
-      'Hello! I am your AI stress assessment interviewer. ' +
+      'Hello! This is your AI Stress Assignment. ' +
       'I will ask you 18 questions about your current stress levels. ' +
       'Please answer each question naturally and honestly. ' +
       'You may speak your answer or type it below. Let us begin.'
@@ -279,6 +296,8 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
   useEffect(() => {
     return () => {
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      void audioRecorderRef.current?.dispose();
+      audioRecorderRef.current = null;
       window.speechSynthesis.cancel();
       if (recognitionRef.current) {
         try { recognitionRef.current.stop(); } catch { /* ignore */ }
@@ -305,8 +324,8 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
             <Brain className="h-5 w-5 text-white" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-white">AI Stress Interviewer</p>
-            <p className="text-xs text-slate-400">Video Assessment · Confidential</p>
+            <p className="text-sm font-semibold text-white">AI Stress Assignment</p>
+            <p className="text-xs text-slate-400">Stress Assignment · Confidential</p>
           </div>
         </div>
         {phase !== 'submitting' && (
@@ -340,9 +359,9 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
               <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-blue-600/20 ring-4 ring-blue-500/30">
                 <Brain className="h-10 w-10 text-blue-400" />
               </div>
-              <h2 className="mb-3 text-2xl font-bold">AI Video Assessment</h2>
+              <h2 className="mb-3 text-2xl font-bold">AI Stress Assignment</h2>
               <p className="mb-8 leading-relaxed text-slate-400">
-                This assessment uses your camera and microphone to conduct an AI-powered interview.
+                This assessment uses your camera and microphone to conduct an AI-powered stress assignment.
                 The AI will speak each of the 18 questions aloud and analyse your verbal responses
                 to predict your stress level using machine learning.
               </p>
@@ -394,13 +413,13 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
                     <Brain className="h-10 w-10 text-blue-400" />
                   </div>
                   <h3 className="mb-1 text-xl font-bold">Dr. AI</h3>
-                  <p className="mb-1 text-sm text-slate-400">AI Stress Assessment Interviewer</p>
+                  <p className="mb-1 text-sm text-slate-400">AI Stress Assignment</p>
                   <p className="mb-8 text-sm text-slate-500">18 Questions · ~15 mins · Confidential</p>
                   <button
-                    onClick={startInterview}
+                    onClick={startAssignment}
                     className="w-full rounded-xl bg-blue-600 py-3.5 font-semibold text-white transition hover:bg-blue-500"
                   >
-                    Start Interview
+                    Start Assignment
                   </button>
                 </div>
               </div>
@@ -408,7 +427,7 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
           </div>
         )}
 
-        {/* ══ Interview screen (ai-speaking + user-answering) ══ */}
+        {/* ══ Assignment screen (ai-speaking + user-answering) ══ */}
         {(phase === 'ai-speaking' || phase === 'user-answering') && (
           <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">
             {/* Question counter row */}

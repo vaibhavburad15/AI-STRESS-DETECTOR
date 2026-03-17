@@ -542,9 +542,48 @@ class StressPredictor:
         }
 
     def retrain_with_new_data(self, new_responses: List[List[int]], new_labels: List[int]):
-        """Placeholder for future continuous-learning support."""
-        _ = (new_responses, new_labels)
-        pass
+        """Append validated labeled rows to the dataset CSV and retrain the questionnaire model."""
+        if not new_responses or not new_labels:
+            raise ValueError("Provide at least one labeled sample for retraining.")
+        if len(new_responses) != len(new_labels):
+            raise ValueError("new_responses and new_labels must have the same length.")
+
+        feature_columns = [f"q{i+1}" for i in range(18)]
+        validated_rows = []
+        for responses, label in zip(new_responses, new_labels):
+            if len(responses) != 18:
+                raise ValueError(f"Each response set must contain 18 answers, got {len(responses)}.")
+            if not all(1 <= int(response) <= 5 for response in responses):
+                raise ValueError("All questionnaire responses must be integers from 1 to 5.")
+
+            normalized_label = int(label)
+            if normalized_label not in self.stress_labels:
+                raise ValueError(f"Unsupported stress label '{label}'. Expected one of {list(self.stress_labels)}.")
+
+            validated_rows.append([int(response) for response in responses] + [normalized_label])
+
+        dataset_path = os.path.join(os.path.dirname(__file__), "stress_training_dataset_100k.csv")
+        expected_columns = feature_columns + ["stress_level"]
+        incoming_df = pd.DataFrame(validated_rows, columns=expected_columns)
+
+        if os.path.exists(dataset_path):
+            existing_df = pd.read_csv(dataset_path)
+            missing_columns = [column for column in expected_columns if column not in existing_df.columns]
+            if missing_columns:
+                raise ValueError(f"Existing training dataset is missing required columns: {missing_columns}")
+            combined_df = pd.concat([existing_df[expected_columns], incoming_df], ignore_index=True)
+        else:
+            combined_df = incoming_df
+
+        combined_df.to_csv(dataset_path, index=False)
+        self._retrain_model()
+
+        return {
+            "status": "retrained",
+            "added_rows": int(len(incoming_df)),
+            "total_rows": int(len(combined_df)),
+            "dataset_path": dataset_path,
+        }
 
 
 predictor = StressPredictor()

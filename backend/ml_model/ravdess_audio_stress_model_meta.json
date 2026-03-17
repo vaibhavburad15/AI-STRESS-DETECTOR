@@ -1,0 +1,209 @@
+{
+  "feature_source": "C:\\Project\\AI-STRESS-DETECTOR\\backend\\ml_model\\ravdess_stress_features.csv",
+  "dataset_root": null,
+  "total_rows": 1440,
+  "train_rows": 1200,
+  "test_rows": 240,
+  "split_method": "manifest_split",
+  "features": [
+    "duration_sec",
+    "rms_mean",
+    "rms_std",
+    "rms_p90",
+    "zcr_mean",
+    "zcr_std",
+    "centroid_mean",
+    "centroid_std",
+    "bandwidth_mean",
+    "bandwidth_std",
+    "rolloff_mean",
+    "rolloff_std",
+    "flatness_mean",
+    "flatness_std",
+    "mfcc_01_mean",
+    "mfcc_02_mean",
+    "mfcc_03_mean",
+    "mfcc_04_mean",
+    "mfcc_05_mean",
+    "mfcc_06_mean",
+    "mfcc_07_mean",
+    "mfcc_08_mean",
+    "mfcc_09_mean",
+    "mfcc_10_mean",
+    "mfcc_11_mean",
+    "mfcc_12_mean",
+    "mfcc_13_mean",
+    "mfcc_01_std",
+    "mfcc_02_std",
+    "mfcc_03_std",
+    "mfcc_04_std",
+    "mfcc_05_std",
+    "mfcc_06_std",
+    "mfcc_07_std",
+    "mfcc_08_std",
+    "mfcc_09_std",
+    "mfcc_10_std",
+    "mfcc_11_std",
+    "mfcc_12_std",
+    "mfcc_13_std",
+    "mfcc_delta_01_mean",
+    "mfcc_delta_02_mean",
+    "mfcc_delta_03_mean",
+    "mfcc_delta_04_mean",
+    "mfcc_delta_05_mean",
+    "mfcc_delta_06_mean",
+    "mfcc_delta_07_mean",
+    "mfcc_delta_08_mean",
+    "mfcc_delta_09_mean",
+    "mfcc_delta_10_mean",
+    "mfcc_delta_11_mean",
+    "mfcc_delta_12_mean",
+    "mfcc_delta_13_mean",
+    "mfcc_delta_01_std",
+    "mfcc_delta_02_std",
+    "mfcc_delta_03_std",
+    "mfcc_delta_04_std",
+    "mfcc_delta_05_std",
+    "mfcc_delta_06_std",
+    "mfcc_delta_07_std",
+    "mfcc_delta_08_std",
+    "mfcc_delta_09_std",
+    "mfcc_delta_10_std",
+    "mfcc_delta_11_std",
+    "mfcc_delta_12_std",
+    "mfcc_delta_13_std",
+    "pitch_mean",
+    "pitch_std",
+    "pitch_range",
+    "pitched_frame_ratio",
+    "jitter_local",
+    "shimmer_local",
+    "pause_ratio",
+    "voiced_ratio",
+    "voiced_rms_mean",
+    "voiced_rms_std",
+    "speech_turns_per_sec",
+    "energy_drift"
+  ],
+  "model_type": "Pipeline",
+  "selected_model_name": "logreg_v1",
+  "candidate_results": {
+    "ensemble_v1": {
+      "accuracy": 0.5291666666666667,
+      "balanced_accuracy": 0.5348958333333333
+    },
+    "svc_rbf_v1": {
+      "accuracy": 0.5041666666666667,
+      "balanced_accuracy": 0.5088541666666666
+    },
+    "extra_trees_v1": {
+      "accuracy": 0.4666666666666667,
+      "balanced_accuracy": 0.4140625
+    },
+    "logreg_v1": {
+      "accuracy": 0.5333333333333333,
+      "balanced_accuracy": 0.5802083333333333
+    }
+  },
+  "random_state": 42,
+  "accuracy": 0.5333333333333333,
+  "balanced_accuracy": 0.5802083333333333,
+  "cross_validation": {
+    "method": "stratified_group_kfold",
+    "scores": [
+      0.49,
+      0.5233333333333333,
+      0.5233333333333333,
+      0.44,
+      0.4708333333333333
+    ],
+    "mean": 0.48949999999999994,
+    "std": 0.031900888179902866
+  },
+  "class_distribution": {
+    "high": 480,
+    "low": 192,
+    "moderate": 480,
+    "severe": 288
+  },
+  "speaker_count": 24,
+  "top_feature_importance": {
+    "zcr_std": 0.09984374999999998,
+    "pitch_mean": 0.08020833333333331,
+    "pitch_std": 0.079375,
+    "flatness_mean": 0.07437500000000001,
+    "mfcc_06_std": 0.06588541666666667,
+    "energy_drift": 0.05624999999999999,
+    "mfcc_02_mean": 0.05572916666666665,
+    "mfcc_04_std": 0.054479166666666676,
+    "zcr_mean": 0.05213541666666669,
+    "voiced_rms_mean": 0.05041666666666665
+  },
+  "classification_report": {
+    "Low": {
+      "precision": 0.5416666666666666,
+      "recall": 0.8125,
+      "f1-score": 0.65,
+      "support": 32.0
+    },
+    "Moderate": {
+      "precision": 0.5517241379310345,
+      "recall": 0.4,
+      "f1-score": 0.463768115942029,
+      "support": 80.0
+    },
+    "High": {
+      "precision": 0.4883720930232558,
+      "recall": 0.525,
+      "f1-score": 0.5060240963855421,
+      "support": 80.0
+    },
+    "Severe": {
+      "precision": 0.5833333333333334,
+      "recall": 0.5833333333333334,
+      "f1-score": 0.5833333333333334,
+      "support": 48.0
+    },
+    "accuracy": 0.5333333333333333,
+    "macro avg": {
+      "precision": 0.5412740577385726,
+      "recall": 0.5802083333333333,
+      "f1-score": 0.5507813864152261,
+      "support": 240.0
+    },
+    "weighted avg": {
+      "precision": 0.5355876325403189,
+      "recall": 0.5333333333333333,
+      "f1-score": 0.5265974041091904,
+      "support": 240.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      26,
+      4,
+      2,
+      0
+    ],
+    [
+      15,
+      32,
+      28,
+      5
+    ],
+    [
+      7,
+      16,
+      42,
+      15
+    ],
+    [
+      0,
+      6,
+      14,
+      28
+    ]
+  ],
+  "accuracy_note": "Speaker-independent accuracy is the meaningful metric for voice stress detection. If this score is far below 0.90, collect more speakers before tuning the model.",
+  "variant_name": "ravdess"
+}
