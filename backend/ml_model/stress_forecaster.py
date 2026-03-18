@@ -1,6 +1,11 @@
+import hashlib
+import os
+import pickle
 from typing import Any, Dict, List
 
 import numpy as np
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
 
 
@@ -9,14 +14,44 @@ class StressForecasterNN:
 
     def __init__(self, window_size: int = 5):
         self.window_size = window_size
-        self.model = self._train_synthetic_forecaster()
+        self.model_path = os.path.join(os.path.dirname(__file__), "stress_forecaster_nn.pkl")
+        self.model = self._load_or_train_model()
 
-    def _train_synthetic_forecaster(self) -> MLPRegressor:
+    @staticmethod
+    def _sha256_file(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(8192), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _load_pickle_with_integrity(self, path: str):
+        expected_hash = os.getenv("STRESS_FORECASTER_SHA256", "").strip()
+        actual_hash = self._sha256_file(path)
+        if expected_hash and actual_hash.lower() != expected_hash.lower():
+            raise ValueError("Integrity check failed for stress forecaster model")
+
+        with open(path, "rb") as model_file:
+            return pickle.load(model_file)
+
+    def _load_or_train_model(self) -> Pipeline:
+        if os.path.exists(self.model_path):
+            try:
+                return self._load_pickle_with_integrity(self.model_path)
+            except Exception:
+                pass
+
+        model = self._train_synthetic_forecaster()
+        with open(self.model_path, "wb") as model_file:
+            pickle.dump(model, model_file)
+        return model
+
+    def _train_synthetic_forecaster(self) -> Pipeline:
         rng = np.random.default_rng(42)
         X = []
         y = []
 
-        for _ in range(3500):
+        for _ in range(5500):
             base = rng.uniform(0.2, 2.8)
             drift = rng.uniform(-0.12, 0.12)
             noise = rng.normal(0, 0.22, size=14)
@@ -33,11 +68,24 @@ class StressForecasterNN:
         X_arr = np.array(X, dtype=float)
         y_arr = np.array(y, dtype=float)
 
-        model = MLPRegressor(
-            hidden_layer_sizes=(64, 32),
-            random_state=42,
-            max_iter=500,
-            learning_rate_init=1e-3,
+        model = Pipeline(
+            [
+                ("scale", StandardScaler()),
+                (
+                    "mlp",
+                    MLPRegressor(
+                        hidden_layer_sizes=(96, 48),
+                        activation="relu",
+                        alpha=1e-3,
+                        random_state=42,
+                        max_iter=700,
+                        learning_rate_init=7e-4,
+                        early_stopping=True,
+                        validation_fraction=0.15,
+                        n_iter_no_change=20,
+                    ),
+                ),
+            ]
         )
         model.fit(X_arr, y_arr)
         return model

@@ -100,16 +100,28 @@ class VerbalResponseNNScorer:
 
         model = Pipeline(
             [
-                ("tfidf", TfidfVectorizer(ngram_range=(1, 2), min_df=1, max_features=3000)),
+                (
+                    "tfidf",
+                    TfidfVectorizer(
+                        ngram_range=(1, 3),
+                        min_df=1,
+                        max_features=5000,
+                        strip_accents="unicode",
+                        sublinear_tf=True,
+                    ),
+                ),
                 (
                     "mlp",
                     MLPClassifier(
-                        hidden_layer_sizes=(64, 32),
+                        hidden_layer_sizes=(128, 64),
                         activation="relu",
                         solver="adam",
-                        alpha=1e-4,
+                        alpha=5e-4,
                         learning_rate_init=1e-3,
-                        max_iter=300,
+                        max_iter=600,
+                        early_stopping=True,
+                        validation_fraction=0.15,
+                        n_iter_no_change=15,
                         random_state=42,
                     ),
                 ),
@@ -133,11 +145,15 @@ class VerbalResponseNNScorer:
         confidences: List[float] = []
         for i, pred in enumerate(preds):
             score = int(np.clip(pred, 1, 5))
+            confidence = float(np.max(probs[i]))
+            # When confidence is low, smooth toward neutral to reduce unstable jumps.
+            if confidence < 0.45:
+                score = int(round((score + 3) / 2))
             # Q15 asks satisfaction. Invert model output for stress direction.
             if i == 14:
                 score = 6 - score
             scores.append(score)
-            confidences.append(float(np.max(probs[i])))
+            confidences.append(confidence)
 
         return {
             "scores": scores,

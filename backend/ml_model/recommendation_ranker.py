@@ -1,7 +1,11 @@
+import hashlib
+import os
+import pickle
 from typing import Any, Dict, List
 
 import numpy as np
 from sklearn.feature_extraction import DictVectorizer
+from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
 
@@ -10,7 +14,37 @@ class RecommendationNNRanker:
     """NN ranker for personalized recommendation ordering."""
 
     def __init__(self):
-        self.model = self._train_on_synthetic_data()
+        self.model_path = os.path.join(os.path.dirname(__file__), "recommendation_ranker_nn.pkl")
+        self.model = self._load_or_train_model()
+
+    @staticmethod
+    def _sha256_file(path: str) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(8192), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _load_pickle_with_integrity(self, path: str):
+        expected_hash = os.getenv("RECOMMENDATION_RANKER_SHA256", "").strip()
+        actual_hash = self._sha256_file(path)
+        if expected_hash and actual_hash.lower() != expected_hash.lower():
+            raise ValueError("Integrity check failed for recommendation ranker model")
+
+        with open(path, "rb") as model_file:
+            return pickle.load(model_file)
+
+    def _load_or_train_model(self) -> Pipeline:
+        if os.path.exists(self.model_path):
+            try:
+                return self._load_pickle_with_integrity(self.model_path)
+            except Exception:
+                pass
+
+        model = self._train_on_synthetic_data()
+        with open(self.model_path, "wb") as model_file:
+            pickle.dump(model, model_file)
+        return model
 
     def _train_on_synthetic_data(self) -> Pipeline:
         rows: List[Dict[str, Any]] = []
@@ -53,13 +87,19 @@ class RecommendationNNRanker:
         model = Pipeline(
             [
                 ("vec", DictVectorizer(sparse=False)),
+                ("scale", StandardScaler()),
                 (
                     "mlp",
                     MLPRegressor(
-                        hidden_layer_sizes=(48, 24),
+                        hidden_layer_sizes=(80, 40),
+                        activation="relu",
+                        alpha=8e-4,
                         random_state=42,
-                        max_iter=400,
-                        learning_rate_init=1e-3,
+                        max_iter=700,
+                        learning_rate_init=8e-4,
+                        early_stopping=True,
+                        validation_fraction=0.15,
+                        n_iter_no_change=20,
                     ),
                 ),
             ]
