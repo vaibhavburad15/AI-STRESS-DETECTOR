@@ -619,7 +619,7 @@ export default function VideoAssessmentModal({ questions, onComplete, onClose }:
               </div>
               <h2 className="mb-2 text-2xl font-bold">Analysing Your Assessment</h2>
               <p className="text-slate-400">
-                Processing your verbal responses with AI and running the stress prediction model…
+                Processing your verbal responses with AI and running the stress prediction model. Personalized recommendations will continue loading after your result appears.
               </p>
               <div className="mt-6 flex justify-center gap-1.5">
                 {[0, 1, 2].map(i => (

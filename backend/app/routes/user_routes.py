@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
 from bson import ObjectId
 from datetime import datetime
 from typing import List, Dict, Optional, Any
@@ -208,6 +208,82 @@ async def _generate_and_store_enhanced_recommendations(
         logger.warning("Failed to generate enhanced recommendations for test %s: %s", test_id, exc)
         return None
 
+
+def _send_stress_result_sms_safe(
+    phone: str,
+    user_name: str,
+    stress_label: str,
+    confidence: float,
+    top_recommendations: List[str],
+) -> None:
+    try:
+        sms_service.send_stress_result_sms(
+            phone=phone,
+            user_name=user_name,
+            stress_label=stress_label,
+            confidence=confidence,
+            top_recommendations=top_recommendations,
+        )
+    except Exception as exc:
+        logger.warning("Failed to send stress result SMS: %s", exc)
+
+
+def _send_crisis_alert_email_safe(
+    user_email: str,
+    user_name: str,
+    crisis_reasons: List[str],
+) -> None:
+    try:
+        email_service.send_crisis_alert_email(
+            user_email=user_email,
+            user_name=user_name,
+            crisis_reasons=crisis_reasons,
+        )
+    except Exception as exc:
+        logger.warning("Failed to send crisis alert email: %s", exc)
+
+
+def _schedule_post_submit_tasks(
+    background_tasks: BackgroundTasks,
+    test_id: str,
+    submitting_user: Optional[Dict[str, Any]],
+    stress_result: Dict[str, Any],
+    test_history: Optional[List[Dict[str, Any]]] = None,
+    top_recommendations: Optional[List[str]] = None,
+    send_crisis_email: bool = False,
+) -> None:
+    if not submitting_user:
+        return
+
+    background_tasks.add_task(
+        _generate_and_store_enhanced_recommendations,
+        test_id=test_id,
+        user=submitting_user,
+        stress_result=stress_result,
+        test_history=test_history,
+    )
+
+    phone_number = str(submitting_user.get("phone_number") or "").strip()
+    if phone_number:
+        background_tasks.add_task(
+            _send_stress_result_sms_safe,
+            phone=phone_number,
+            user_name=submitting_user.get("name", "User"),
+            stress_label=str(stress_result.get("stress_label", "")),
+            confidence=float(stress_result.get("confidence_score", 0.0) or 0.0),
+            top_recommendations=list(top_recommendations or []),
+        )
+
+    if send_crisis_email and (stress_result.get("crisis") or {}).get("is_crisis"):
+        user_email = str(submitting_user.get("email") or "").strip()
+        if user_email:
+            background_tasks.add_task(
+                _send_crisis_alert_email_safe,
+                user_email=user_email,
+                user_name=submitting_user.get("name", "User"),
+                crisis_reasons=list((stress_result.get("crisis") or {}).get("reasons") or []),
+            )
+
 # ============================================
 # QUESTIONNAIRE
 # ============================================
@@ -373,6 +449,7 @@ async def convert_verbal_to_scores(verbal_responses: List[str]) -> List[int]:
 @router.post("/video-test/submit")
 async def submit_video_test(
     video_test: VideoTestSubmission,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_role(["user"])),
 ):
     """Submit video-based stress assessment with full explainability."""
@@ -446,34 +523,23 @@ async def submit_video_test(
             for item in history
         ],
     ]
-    if submitting_user:
-        await _generate_and_store_enhanced_recommendations(
-            test_id=test_id,
-            user=submitting_user,
-            stress_result={
-                "stress_level": int(result["stress_level"]),
-                "stress_label": result["stress_label"],
-                "responses": scores,
-                "confidence_score": result["confidence"],
-                "category_scores": result["category_scores"],
-                "risk_factors": result["risk_factors"],
-                "trend": trend_data,
-                "crisis": crisis_data,
-            },
-            test_history=recommendation_history,
-        )
-
-    try:
-        if submitting_user and submitting_user.get("phone_number"):
-            sms_service.send_stress_result_sms(
-                phone=submitting_user["phone_number"],
-                user_name=submitting_user["name"],
-                stress_label=result["stress_label"],
-                confidence=result["confidence"],
-                top_recommendations=result["recommendations"][:3] if result["recommendations"] else [],
-            )
-    except Exception as exc:
-        logger.warning("Failed to send stress result SMS: %s", exc)
+    _schedule_post_submit_tasks(
+        background_tasks=background_tasks,
+        test_id=test_id,
+        submitting_user=submitting_user,
+        stress_result={
+            "stress_level": int(result["stress_level"]),
+            "stress_label": result["stress_label"],
+            "responses": scores,
+            "confidence_score": result["confidence"],
+            "category_scores": result["category_scores"],
+            "risk_factors": result["risk_factors"],
+            "trend": trend_data,
+            "crisis": crisis_data,
+        },
+        test_history=recommendation_history,
+        top_recommendations=result["recommendations"][:3] if result["recommendations"] else [],
+    )
 
     return {
         "id": test_id,
@@ -500,7 +566,11 @@ async def submit_video_test(
 # ============================================
 
 @router.post("/test/submit")
-async def submit_test(test: TestSubmission, current_user: dict = Depends(require_role(["user"]))):
+async def submit_test(
+    test: TestSubmission,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(require_role(["user"])),
+):
     """Submit stress test and get ML-based prediction with SHAP explanation"""
     user_id = current_user["user_id"]
     
@@ -562,47 +632,24 @@ async def submit_test(test: TestSubmission, current_user: dict = Depends(require
             for item in history
         ],
     ]
-    if submitting_user:
-        await _generate_and_store_enhanced_recommendations(
-            test_id=test_id,
-            user=submitting_user,
-            stress_result={
-                "stress_level": int(result["stress_level"]),
-                "stress_label": result["stress_label"],
-                "responses": test.responses,
-                "confidence_score": result["confidence"],
-                "category_scores": result["category_scores"],
-                "risk_factors": result["risk_factors"],
-                "trend": trend_data,
-                "crisis": crisis_data,
-            },
-            test_history=recommendation_history,
-        )
-
-    # Send SMS notification
-    try:
-        if submitting_user and submitting_user.get("phone_number"):
-            sms_service.send_stress_result_sms(
-                phone=submitting_user["phone_number"],
-                user_name=submitting_user["name"],
-                stress_label=result["stress_label"],
-                confidence=result["confidence"],
-                top_recommendations=result["recommendations"][:3] if result["recommendations"] else []
-            )
-    except Exception as e:
-        print(f"Failed to send stress result SMS: {e}")
-
-    # Crisis email alert to user if detected
-    if crisis_data.get("is_crisis"):
-        try:
-            if submitting_user:
-                email_service.send_crisis_alert_email(
-                    user_email=submitting_user.get("email", ""),
-                    user_name=submitting_user.get("name", "User"),
-                    crisis_reasons=crisis_data.get("reasons", []),
-                )
-        except Exception as e:
-            logger.warning(f"Failed to send crisis alert email: {e}")
+    _schedule_post_submit_tasks(
+        background_tasks=background_tasks,
+        test_id=test_id,
+        submitting_user=submitting_user,
+        stress_result={
+            "stress_level": int(result["stress_level"]),
+            "stress_label": result["stress_label"],
+            "responses": test.responses,
+            "confidence_score": result["confidence"],
+            "category_scores": result["category_scores"],
+            "risk_factors": result["risk_factors"],
+            "trend": trend_data,
+            "crisis": crisis_data,
+        },
+        test_history=recommendation_history,
+        top_recommendations=result["recommendations"][:3] if result["recommendations"] else [],
+        send_crisis_email=True,
+    )
 
     return {
         "id": test_id,

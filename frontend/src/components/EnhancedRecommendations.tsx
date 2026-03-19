@@ -81,7 +81,16 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
   };
 
   if (loading) {
-    return <div className="flex justify-center p-8"><div className="animate-spin">Loading...</div></div>;
+    return (
+      <div className="flex justify-center p-8">
+        <div className="text-center">
+          <div className="animate-spin">Loading...</div>
+          <p className="mt-3 text-sm text-slate-500">
+            Personalized recommendations are still being prepared. Your assessment result is already ready.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (!recommendations) {
