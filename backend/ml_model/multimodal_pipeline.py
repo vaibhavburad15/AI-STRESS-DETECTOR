@@ -51,6 +51,63 @@ class MultimodalStressPipeline:
         model.fit(np.array(X, dtype=float), np.array(y, dtype=int))
         return model
 
+    def _normalized_text_signal(self, text_avg: float) -> float:
+        # Convert text score range [1, 5] to normalized stress signal [0, 1].
+        return float(np.clip((text_avg - 1.0) / 4.0, 0.0, 1.0))
+
+    def _speaking_rate_signal(self, speaking_rate_wpm: float) -> float:
+        # Treat moderate speaking rates as lower stress and extremes as higher stress.
+        clamped_rate = float(np.clip(speaking_rate_wpm, 60.0, 260.0))
+        center = 145.0
+        half_span = 100.0
+        return float(np.clip(abs(clamped_rate - center) / half_span, 0.0, 1.0))
+
+    def _resolve_weights(
+        self,
+        audio_prediction: Optional[Dict[str, Any]],
+        audio_features: Dict[str, float],
+    ) -> Dict[str, float]:
+        if audio_prediction is not None:
+            audio_conf = float(np.clip(audio_prediction.get("confidence", 0.0), 0.0, 1.0))
+            audio_weight = float(np.clip(0.25 + 0.15 * audio_conf, 0.25, 0.40))
+            text_weight = float(np.clip(0.45 - 0.10 * audio_conf, 0.35, 0.45))
+            sentiment_weight = 0.15
+            face_weight = max(0.0, 1.0 - (text_weight + audio_weight + sentiment_weight))
+            return {
+                "text": float(text_weight),
+                "audio": float(audio_weight),
+                "sentiment": float(sentiment_weight),
+                "face": float(face_weight),
+            }
+
+        if audio_features:
+            return {
+                "text": 0.42,
+                "audio": 0.23,
+                "sentiment": 0.17,
+                "face": 0.18,
+            }
+
+        return {
+            "text": 0.56,
+            "audio": 0.0,
+            "sentiment": 0.22,
+            "face": 0.22,
+        }
+
+    def _determine_stress_level(self, fused_signal: float) -> int:
+        if fused_signal < FUSION_THRESHOLDS[0]:
+            return 0
+        if fused_signal < FUSION_THRESHOLDS[1]:
+            return 1
+        if fused_signal < FUSION_THRESHOLDS[2]:
+            return 2
+        return 3
+
+    def _fusion_margin(self, fused_signal: float) -> float:
+        boundaries = (0.0, *FUSION_THRESHOLDS, 1.0)
+        return float(min(abs(fused_signal - boundary) for boundary in boundaries))
+
     def assess(
         self,
         verbal_responses: List[str],
