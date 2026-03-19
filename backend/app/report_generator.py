@@ -18,6 +18,8 @@ from reportlab.platypus import (
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
+from .recommendation_engine import enhanced_engine
+
 # Colour palette
 PRIMARY = HexColor("#2563EB")
 SECONDARY = HexColor("#6366F1")
@@ -91,7 +93,7 @@ class StressReportGenerator:
         # --- Stress Result ---
         stress_level = test_result.get("stress_level", 0)
         stress_label = test_result.get("stress_label", "Unknown")
-        confidence = test_result.get("confidence", 0)
+        confidence = test_result.get("confidence_score", test_result.get("confidence", 0))
         continuous_score = test_result.get("continuous_score", 0)
 
         elements.append(Paragraph("Assessment Results", heading_style))
@@ -182,29 +184,20 @@ class StressReportGenerator:
                 ))
             elements.append(Spacer(1, 8))
 
-        # --- Trend Analysis ---
-        if trend_data and trend_data.get("trend") != "insufficient_data":
-            elements.append(Paragraph("Stress Trend Analysis", heading_style))
-            trend_info = [
-                ["Trend Direction", trend_data["trend"].capitalize()],
-                ["Tests Analysed", str(trend_data.get("tests_analysed", 0))],
-                ["Recent Average", str(trend_data.get("recent_average", "N/A"))],
-                ["Predicted Next Level", str(trend_data.get("predicted_next_level", "N/A"))],
-                ["Volatility", str(trend_data.get("volatility", "N/A"))],
-            ]
-            trend_table = Table(trend_info, colWidths=[140, 200])
-            trend_table.setStyle(TableStyle([
-                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 10),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]))
-            elements.append(trend_table)
-            elements.append(Spacer(1, 8))
-
         # --- Recommendations ---
-        recommendations = test_result.get("recommendations", [])
+        enhanced_snapshot = test_result.get("enhanced_recommendations")
+        recommendations = enhanced_engine.extract_recommendation_lines(enhanced_snapshot)
+        if not recommendations:
+            recommendations = test_result.get("recommendations", [])
         if recommendations:
             elements.append(Paragraph("Personalized Recommendations", heading_style))
+            if isinstance(enhanced_snapshot, dict):
+                meta = enhanced_snapshot.get("meta") or {}
+                source_label = str(meta.get("source_label") or "").strip()
+                model = str(meta.get("model") or "").strip()
+                source_parts = [part for part in [source_label, f"Model: {model}" if model else ""] if part]
+                if source_parts:
+                    elements.append(Paragraph(" | ".join(source_parts), body_style))
             for i, rec in enumerate(recommendations, 1):
                 elements.append(Paragraph(f"{i}. {rec}", body_style))
             elements.append(Spacer(1, 8))
@@ -250,12 +243,15 @@ class StressReportGenerator:
             f"Date: {datetime.utcnow().strftime('%B %d, %Y %H:%M UTC')}",
             "",
             f"Stress Level: {test_result.get('stress_label', 'Unknown')}",
-            f"Confidence: {test_result.get('confidence', 0) * 100:.1f}%",
+            f"Confidence: {test_result.get('confidence_score', test_result.get('confidence', 0)) * 100:.1f}%",
             f"Continuous Score: {test_result.get('continuous_score', 0)}/100",
             "",
             "RECOMMENDATIONS:",
         ]
-        for i, rec in enumerate(test_result.get("recommendations", []), 1):
+        recommendations = enhanced_engine.extract_recommendation_lines(test_result.get("enhanced_recommendations"))
+        if not recommendations:
+            recommendations = test_result.get("recommendations", [])
+        for i, rec in enumerate(recommendations, 1):
             lines.append(f"  {i}. {rec}")
 
         if explanation and explanation.get("top_factors"):

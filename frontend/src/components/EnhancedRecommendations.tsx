@@ -1,6 +1,4 @@
-// frontend/src/components/EnhancedRecommendations.tsx
-
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { RecommendationCard } from './RecommendationCard';
 import { ProgressTracker } from './ProgressTracker';
 import api from '../services/api';
@@ -18,12 +16,16 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
 
   useEffect(() => {
     loadRecommendations();
-    loadAchievements();
-  }, [testId]);
+    if (userId) {
+      loadAchievements();
+    }
+  }, [testId, userId]);
 
   const loadRecommendations = async () => {
     try {
-      const { data } = await api.post(`/api/user/recommendations/enhanced`, { test_id: testId });
+      const { data } = await api.post('/api/user/recommendations/enhanced', null, {
+        params: { test_id: testId }
+      });
       setRecommendations(data);
     } catch (error) {
       console.error('Failed to load recommendations', error);
@@ -33,6 +35,10 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
   };
 
   const loadAchievements = async () => {
+    if (!userId) {
+      return;
+    }
+
     try {
       const { data } = await api.get(`/api/user/achievements/${userId}`);
       setAchievements(data);
@@ -60,14 +66,14 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
         user_id: userId,
         recommendation_id: recommendationId,
         effectiveness_rating: rating,
-        notes: notes
+        notes
       });
-      
+
       alert(`Completed! +${data.points_earned} points!`);
       if (data.new_badges.length > 0) {
         alert(`New badge earned: ${data.new_badges.join(', ')}`);
       }
-      
+
       loadAchievements();
     } catch (error) {
       console.error('Failed to complete recommendation', error);
@@ -83,34 +89,42 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
   }
 
   const categories = [
-    { key: 'immediate', label: '⚡ Right Now', icon: '⚡' },
-    { key: 'daily', label: '📅 Daily Habits', icon: '📅' },
-    { key: 'weekly', label: '🗓️ Weekly Goals', icon: '🗓️' },
-    { key: 'lifestyle', label: '🌱 Lifestyle', icon: '🌱' },
-    { key: 'professional', label: '👨‍⚕️ Professional', icon: '👨‍⚕️' }
+    { key: 'immediate', label: 'Right Now', icon: 'Now' },
+    { key: 'daily', label: 'Daily Habits', icon: 'Day' },
+    { key: 'weekly', label: 'Weekly Goals', icon: 'Week' },
+    { key: 'lifestyle', label: 'Lifestyle', icon: 'Life' },
+    { key: 'professional', label: 'Professional', icon: 'Care' }
   ];
 
   return (
     <div className="enhanced-recommendations-container">
-      {/* Progress Tracker */}
-      {achievements && (
-        <ProgressTracker achievements={achievements} />
-      )}
+      {achievements && <ProgressTracker achievements={achievements} />}
 
-      {/* Summary Banner */}
       <div className={`summary-banner priority-${recommendations.summary.priority}`}>
+        <div className="summary-source-row">
+          <span className={`source-pill source-${recommendations.meta?.primary_source || recommendations.summary.source || 'rule_based'}`}>
+            {recommendations.meta?.source_label || recommendations.summary.source_label || 'Rule-based recommendations'}
+          </span>
+          {recommendations.meta?.model && (
+            <span className="model-pill">Model: {recommendations.meta.model}</span>
+          )}
+        </div>
+
         <h2 className="text-2xl font-bold">{recommendations.summary.title}</h2>
+        {recommendations.summary.body && (
+          <p className="summary-body">{recommendations.summary.body}</p>
+        )}
+
         <div className="stress-indicator">
           <span className="stress-label">{recommendations.summary.stress_label}</span>
           {recommendations.summary.action_required && (
-            <span className="urgent-tag">⚠️ Action Required</span>
+            <span className="urgent-tag">Action Required</span>
           )}
         </div>
       </div>
 
-      {/* Category Tabs */}
       <div className="category-tabs">
-        {categories.map(cat => (
+        {categories.map((cat) => (
           <button
             key={cat.key}
             onClick={() => setActiveCategory(cat.key)}
@@ -123,7 +137,6 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
         ))}
       </div>
 
-      {/* Recommendations Grid */}
       <div className="recommendations-grid">
         {recommendations[activeCategory]?.map((rec: any) => (
           <RecommendationCard
@@ -135,10 +148,9 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
         ))}
       </div>
 
-      {/* Quick Wins Section */}
       {recommendations.quick_wins && recommendations.quick_wins.length > 0 && (
         <div className="quick-wins">
-          <h3>⚡ Quick Wins (30-60 seconds)</h3>
+          <h3>Quick Wins (30-60 seconds)</h3>
           <div className="quick-wins-list">
             {recommendations.quick_wins.map((qw: any) => (
               <div key={qw.id} className="quick-win-card">

@@ -1,5 +1,3 @@
-// frontend/src/components/RecommendationCard.tsx
-
 import React, { useState } from 'react';
 import { Star } from 'lucide-react';
 
@@ -18,10 +16,6 @@ export const RecommendationCard: React.FC<RecommendationCardProps> = ({
   const [rating, setRating] = useState(0);
   const [notes, setNotes] = useState('');
 
-  const handleComplete = () => {
-    setShowRating(true);
-  };
-
   const submitCompletion = () => {
     onComplete(recommendation.id, rating, notes);
     setShowRating(false);
@@ -31,26 +25,31 @@ export const RecommendationCard: React.FC<RecommendationCardProps> = ({
 
   return (
     <div className={`recommendation-card priority-${recommendation.priority}`}>
-      {/* Icon */}
       <div className="card-icon">{recommendation.icon}</div>
 
-      {/* Content */}
       <div className="card-content">
+        <div className="card-badges">
+          <span className={`recommendation-source source-${recommendation.source || 'rule_based'}`}>
+            {recommendation.source_label || 'Rule-based fallback'}
+          </span>
+          {recommendation.model && (
+            <span className="recommendation-model">{recommendation.model}</span>
+          )}
+        </div>
+
         <h3 className="card-title">{recommendation.title}</h3>
         <p className="card-description">{recommendation.description}</p>
 
-        {/* Meta Info */}
         <div className="card-meta">
-          <span className="duration">⏱️ {recommendation.duration}</span>
+          <span className="duration">Time: {recommendation.duration}</span>
           <span className={`difficulty ${recommendation.difficulty}`}>
             {recommendation.difficulty}
           </span>
           <span className="effectiveness">
-            ✅ {recommendation.effectiveness}% effective
+            {recommendation.effectiveness}% effective
           </span>
         </div>
 
-        {/* Instructions (if available) */}
         {recommendation.instructions && (
           <div className="instructions">
             <h4>How to do it:</h4>
@@ -62,28 +61,26 @@ export const RecommendationCard: React.FC<RecommendationCardProps> = ({
           </div>
         )}
 
-        {/* Actions */}
         <div className="card-actions">
           <button
             onClick={() => onStart(recommendation.id)}
             className="btn-primary"
           >
-            {recommendation.action} →
+            {recommendation.action} {'->'}
           </button>
           <button
-            onClick={handleComplete}
+            onClick={() => setShowRating(true)}
             className="btn-secondary"
           >
-            ✅ Mark Done
+            Mark Done
           </button>
         </div>
 
-        {/* Rating Modal */}
         {showRating && (
           <div className="rating-modal">
             <h4>How effective was this?</h4>
             <div className="star-rating">
-              {[1, 2, 3, 4, 5].map(star => (
+              {[1, 2, 3, 4, 5].map((star) => (
                 <Star
                   key={star}
                   className={`star ${rating >= star ? 'filled' : ''}`}

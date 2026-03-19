@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from bson import ObjectId
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import json as _json
 import re as _re
 from pydantic import BaseModel
@@ -142,6 +142,71 @@ def _groq_model_candidates() -> List[str]:
         if model_name and model_name not in candidates:
             candidates.append(model_name)
     return candidates
+
+
+def _build_recommendation_context(
+    user: Dict[str, Any],
+    stress_result: Dict[str, Any],
+    test_history: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    history_payload = []
+    for item in test_history or []:
+        if not isinstance(item, dict):
+            continue
+        history_payload.append(
+            {
+                "stress_level": item.get("stress_level"),
+                "timestamp": item.get("timestamp"),
+            }
+        )
+
+    return {
+        "user_data": {
+            "age": user.get("age"),
+            "gender": user.get("gender"),
+            "location": user.get("location"),
+            "name": user.get("name"),
+            "previous_stress_issues": user.get("has_previous_stress_issues", False),
+            "test_history": history_payload,
+        },
+        "stress_result": {
+            "stress_level": stress_result.get("stress_level"),
+            "stress_label": stress_result.get("stress_label"),
+            "responses": stress_result.get("responses", []),
+            "confidence_score": stress_result.get("confidence_score"),
+            "category_scores": stress_result.get("category_scores", {}),
+            "risk_factors": stress_result.get("risk_factors", []),
+            "trend": stress_result.get("trend"),
+            "crisis": stress_result.get("crisis"),
+        },
+    }
+
+
+async def _generate_and_store_enhanced_recommendations(
+    test_id: str,
+    user: Dict[str, Any],
+    stress_result: Dict[str, Any],
+    test_history: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    try:
+        context = _build_recommendation_context(user, stress_result, test_history)
+        recommendations = await enhanced_engine.generate_personalized_recommendations_with_llm(
+            user_data=context["user_data"],
+            stress_result=context["stress_result"],
+        )
+        tests_collection.update_one(
+            {"_id": ObjectId(test_id)},
+            {
+                "$set": {
+                    "enhanced_recommendations": recommendations,
+                    "enhanced_recommendations_generated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return recommendations
+    except Exception as exc:
+        logger.warning("Failed to generate enhanced recommendations for test %s: %s", test_id, exc)
+        return None
 
 # ============================================
 # QUESTIONNAIRE
@@ -367,8 +432,38 @@ async def submit_video_test(
 
     users_collection.update_one({"_id": ObjectId(user_id)}, {"$push": {"test_history": test_id}})
 
+    submitting_user = users_collection.find_one({"_id": ObjectId(user_id)})
+    recommendation_history = [
+        {
+            "stress_level": int(result["stress_level"]),
+            "timestamp": test_dict["timestamp"],
+        },
+        *[
+            {
+                "stress_level": item.get("stress_level"),
+                "timestamp": item.get("timestamp"),
+            }
+            for item in history
+        ],
+    ]
+    if submitting_user:
+        await _generate_and_store_enhanced_recommendations(
+            test_id=test_id,
+            user=submitting_user,
+            stress_result={
+                "stress_level": int(result["stress_level"]),
+                "stress_label": result["stress_label"],
+                "responses": scores,
+                "confidence_score": result["confidence"],
+                "category_scores": result["category_scores"],
+                "risk_factors": result["risk_factors"],
+                "trend": trend_data,
+                "crisis": crisis_data,
+            },
+            test_history=recommendation_history,
+        )
+
     try:
-        submitting_user = users_collection.find_one({"_id": ObjectId(user_id)})
         if submitting_user and submitting_user.get("phone_number"):
             sms_service.send_stress_result_sms(
                 phone=submitting_user["phone_number"],
@@ -454,6 +549,35 @@ async def submit_test(test: TestSubmission, current_user: dict = Depends(require
     
     # Fetch user for notifications
     submitting_user = users_collection.find_one({"_id": ObjectId(user_id)})
+    recommendation_history = [
+        {
+            "stress_level": int(result["stress_level"]),
+            "timestamp": test_dict["timestamp"],
+        },
+        *[
+            {
+                "stress_level": item.get("stress_level"),
+                "timestamp": item.get("timestamp"),
+            }
+            for item in history
+        ],
+    ]
+    if submitting_user:
+        await _generate_and_store_enhanced_recommendations(
+            test_id=test_id,
+            user=submitting_user,
+            stress_result={
+                "stress_level": int(result["stress_level"]),
+                "stress_label": result["stress_label"],
+                "responses": test.responses,
+                "confidence_score": result["confidence"],
+                "category_scores": result["category_scores"],
+                "risk_factors": result["risk_factors"],
+                "trend": trend_data,
+                "crisis": crisis_data,
+            },
+            test_history=recommendation_history,
+        )
 
     # Send SMS notification
     try:
@@ -609,35 +733,34 @@ async def get_enhanced_recommendations(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only get recommendations for your own tests"
         )
+
+    cached_recommendations = test.get("enhanced_recommendations")
+    if isinstance(cached_recommendations, dict) and cached_recommendations:
+        return cached_recommendations
     
     # Get test history for trend analysis
     test_history = list(tests_collection.find({"user_id": user_id}).sort("timestamp", -1).limit(10))
     
     # Generate enhanced recommendations
     try:
-        recommendations = enhanced_engine.generate_personalized_recommendations(
-            user_data={
-                "age": user.get("age"),
-                "gender": user.get("gender"),
-                "location": user.get("location"),
-                "name": user.get("name"),
-                "previous_stress_issues": user.get("has_previous_stress_issues", False),
-                "test_history": [
-                    {
-                        "stress_level": t["stress_level"],
-                        "timestamp": t["timestamp"]
-                    }
-                    for t in test_history
-                ]
-            },
+        recommendations = await _generate_and_store_enhanced_recommendations(
+            test_id=test_id,
+            user=user,
             stress_result={
                 "stress_level": test["stress_level"],
                 "stress_label": test["stress_label"],
                 "responses": test.get("responses", []),
-                "confidence_score": test["confidence_score"]
-            }
+                "confidence_score": test["confidence_score"],
+                "category_scores": test.get("category_scores", {}),
+                "risk_factors": test.get("risk_factors", []),
+                "trend": test.get("trend"),
+                "crisis": test.get("crisis"),
+            },
+            test_history=test_history,
         )
-        
+
+        if not recommendations:
+            raise RuntimeError("Recommendation generation returned no data")
         return recommendations
         
     except Exception as e:
