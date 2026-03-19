@@ -36,6 +36,7 @@ from ..database import (
     medical_record_activities_collection
 )
 from ..auth import require_role
+from ..recommendation_engine import enhanced_engine
 
 router = APIRouter(prefix="/api/medical-records", tags=["Medical Records"])
 logger = logging.getLogger(__name__)
@@ -742,7 +743,9 @@ def _generate_stress_pdf(record: dict, stress_data: dict) -> "io.BytesIO":
         story += [qt, Spacer(1, 0.3*cm)]
 
     # Recommendations
-    recs: list = list(stress_data.get("recommendations") or [])
+    recs: list = enhanced_engine.extract_recommendation_lines(stress_data.get("enhanced_recommendations"))
+    if not recs:
+        recs = list(stress_data.get("recommendations") or [])
     if recs:
         story += [
             Spacer(1, 0.3*cm),
@@ -750,6 +753,16 @@ def _generate_stress_pdf(record: dict, stress_data: dict) -> "io.BytesIO":
                        ps("rh", fontName="Helvetica-Bold", fontSize=13,
                           textColor=colors.HexColor("#1e3a8a"), spaceAfter=6)),
         ]
+        meta = stress_data.get("enhanced_recommendations", {}).get("meta", {}) if isinstance(stress_data.get("enhanced_recommendations"), dict) else {}
+        source_label = str(meta.get("source_label") or "").strip()
+        model_name = str(meta.get("model") or "").strip()
+        if source_label or model_name:
+            source_parts = [part for part in [source_label, f"Model: {model_name}" if model_name else ""] if part]
+            story.append(Paragraph(
+                " | ".join(source_parts),
+                ps("rmeta", fontName="Helvetica-Oblique", fontSize=8,
+                   leftIndent=10, spaceAfter=5, textColor=colors.HexColor("#64748b"))
+            ))
         for i, rec in enumerate(recs, 1):
             story.append(Paragraph(f"{i}. {rec}",
                                    ps("ri", fontName="Helvetica", fontSize=9,
@@ -828,6 +841,7 @@ async def download_medical_record(
                             "confidence_score": test_doc.get("confidence_score", 0),
                             "responses":        test_doc.get("responses", []),
                             "recommendations":  test_doc.get("recommendations", []),
+                            "enhanced_recommendations": test_doc.get("enhanced_recommendations"),
                         }
                         print(f"✅ Fetched stress data from tests_collection for {record_id}")
                 except Exception as ex:
@@ -851,6 +865,7 @@ async def download_medical_record(
                 "stress_level": 0, "stress_label": slabel,
                 "confidence_score": sconf,
                 "responses": [], "recommendations": [],
+                "enhanced_recommendations": None,
             }
             print(f"⚠️ Using description fallback for stress PDF: {record_id}")
 
@@ -987,7 +1002,8 @@ async def link_stress_test_to_medical_record(
             "stress_label": stress_test["stress_label"],
             "confidence_score": stress_test["confidence_score"],
             "responses": stress_test["responses"],
-            "recommendations": stress_test.get("recommendations", [])
+            "recommendations": stress_test.get("recommendations", []),
+            "enhanced_recommendations": stress_test.get("enhanced_recommendations"),
         }
     }
     

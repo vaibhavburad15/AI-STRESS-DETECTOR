@@ -24,6 +24,7 @@ import type { EnhancedTest } from '../types';
 import MedicalRecordsManager from '../components/MedicalRecordsManager';
 import AddTestToRecords from '../components/AddTestToRecords';
 import VideoAssessmentModal from '../components/VideoAssessmentModal';
+import { EnhancedRecommendations } from '../components/EnhancedRecommendations';
 import StressExplanation from '../components/StressExplanation';
 
 type DashboardTab = 'test' | 'chatbot' | 'history' | 'appointments' | 'records';
@@ -620,16 +621,11 @@ const UserDashboard = () => {
                   Confidence <span className="font-semibold text-blue-700">{(testResult.confidence_score * 100).toFixed(1)}%</span>
                 </p>
               </div>
-              <div className="mb-5 rounded-2xl bg-slate-50 p-5">
-                <h4 className="mb-3 text-lg font-semibold text-slate-900">Personalized Recommendations</h4>
-                <div className="space-y-2">
-                  {testResult.recommendations.map((rec, idx) => (
-                    <div key={idx} className="flex items-start gap-2">
-                      <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
-                      <p className="text-slate-700">{rec}</p>
-                    </div>
-                  ))}
-                </div>
+              <div className="mb-5">
+                <EnhancedRecommendations
+                  testId={testResult.id}
+                  userId={user?.id || ''}
+                />
               </div>
               <div className="mb-5">
                 <AddTestToRecords
@@ -651,7 +647,6 @@ const UserDashboard = () => {
                     risk_factors: testResult.risk_factors,
                     continuous_score: testResult.continuous_score,
                     probabilities: testResult.probabilities,
-                    trend: testResult.trend,
                     crisis: testResult.crisis,
                   }}
                 />
