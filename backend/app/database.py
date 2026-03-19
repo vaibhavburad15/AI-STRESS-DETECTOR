@@ -218,6 +218,12 @@ def create_indexes():
             ("doctor_id", ASCENDING),
             ("status", ASCENDING)
         ], background=True)
+        appointments_collection.create_index(
+            [("slot_reservation_key", ASCENDING)],
+            unique=True,
+            sparse=True,
+            background=True,
+        )
         print("  ✅ Appointment indexes created")
         
         # ============================================

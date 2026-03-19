@@ -5,9 +5,11 @@ from typing import Any, Mapping
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 
 from ..appointment_access import (
     add_access_state,
+    build_slot_reservation_key,
     get_appointment_by_id,
     require_doctor_appointment_data_access,
     require_doctor_owned_appointment,
@@ -199,7 +201,7 @@ def _update_appointment_status_impl(
     update: AppointmentUpdate,
     current_user: Mapping[str, Any],
 ) -> dict[str, Any]:
-    appointment = get_appointment_by_id(appointment_id)
+    appointment = add_access_state(get_appointment_by_id(appointment_id))
     require_doctor_owned_appointment(current_user, appointment)
 
     valid_statuses = ["pending", "approved", "rejected", "completed"]
@@ -216,13 +218,31 @@ def _update_appointment_status_impl(
     if update.notes:
         update_data["doctor_notes"] = update.notes
 
-    appointments_collection.update_one(
-        {"_id": appointment["_id"]},
-        {"$set": update_data},
+    update_document: dict[str, Any] = {"$set": update_data}
+    slot_reservation_key = build_slot_reservation_key(
+        str(appointment.get("doctor_id") or ""),
+        appointment.get("slot_start_at"),
     )
+    if update.status in {"pending", "approved"} and slot_reservation_key:
+        update_data["slot_reservation_key"] = slot_reservation_key
+    elif update.status == "rejected":
+        update_document["$unset"] = {"slot_reservation_key": ""}
+
+    try:
+        appointments_collection.update_one(
+            {"_id": appointment["_id"]},
+            update_document,
+        )
+    except DuplicateKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This time slot is already reserved by another active appointment.",
+        ) from exc
 
     updated_appointment = dict(appointment)
     updated_appointment.update(update_data)
+    if update.status == "rejected":
+        updated_appointment.pop("slot_reservation_key", None)
     _send_status_notifications(updated_appointment, update)
 
     return {

@@ -47,7 +47,11 @@ const RegisterPage = () => {
     
     if (type === 'checkbox') {
       const checked = (e.target as HTMLInputElement).checked;
-      setFormData({ ...formData, [name]: checked });
+      setFormData({
+        ...formData,
+        [name]: checked,
+        ...(name === 'hasPreviousStressIssues' && !checked ? { medicalDocument: null } : {}),
+      });
     } else {
       setFormData({ ...formData, [name]: value });
     }
@@ -133,13 +137,9 @@ const RegisterPage = () => {
           formData.gender,
           formData.location,
           formData.hasPreviousStressIssues,
-          formData.phone_number.trim() || undefined
+          formData.phone_number.trim() || undefined,
+          formData.medicalDocument,
         );
-        
-        // Upload medical document if provided
-        if (formData.medicalDocument) {
-          await authService.uploadMedicalDocument(formData.medicalDocument);
-        }
       } else {
         // Register doctor
         await authService.registerDoctor(
@@ -189,6 +189,11 @@ const RegisterPage = () => {
           <p className="text-sm text-gray-500">
             Please check your email (and SMS if provided) for the 6-digit verification code.
           </p>
+          {formData.medicalDocument && (
+            <p className="text-sm text-green-600 mt-2">
+              Your medical document was uploaded with the registration form.
+            </p>
+          )}
           <p className="text-sm text-gray-500 mt-2">
             Redirecting to verification page...
           </p>

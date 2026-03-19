@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 import json as _json
 import re as _re
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel
 from ..models import (
     TestSubmission, TestResponse, AppointmentCreate, AppointmentResponse,
@@ -17,6 +18,7 @@ from ..database import (
 )
 from ..appointment_access import (
     add_access_state,
+    build_slot_reservation_key,
     format_slot_window,
     parse_time_slot_window,
     require_doctor_user_access,
@@ -1178,6 +1180,7 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
 
     access_expires_at = slot_end_at + timedelta(hours=1)
     slot_label = format_slot_window(slot_start_at, slot_end_at)
+    slot_reservation_key = build_slot_reservation_key(appointment.doctor_id, slot_start_at)
 
     existing_booking = appointments_collection.find_one(
         {
@@ -1220,14 +1223,21 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
         "slot_start_at": slot_start_at,
         "slot_end_at": slot_end_at,
         "access_expires_at": access_expires_at,
+        "slot_reservation_key": slot_reservation_key,
         "status": "pending",
         "notes": appointment.notes,
         "records_shared_with_doctor": False,
         "shared_with_doctor_at": None,
         "created_at": datetime.utcnow()
     }
-    
-    result = appointments_collection.insert_one(appointment_dict)
+
+    try:
+        result = appointments_collection.insert_one(appointment_dict)
+    except DuplicateKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This time slot was just booked. Please choose another slot.",
+        ) from exc
     appointment_id = str(result.inserted_id)
     
     # ✅ SEND EMAIL + SMS TO USER

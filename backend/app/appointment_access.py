@@ -54,6 +54,15 @@ def format_access_deadline(access_expires_at: datetime | None) -> str:
     return access_expires_at.strftime("%a, %b %d %Y, %I:%M %p")
 
 
+def build_slot_reservation_key(doctor_id: str, slot_start_at: datetime | None) -> str | None:
+    normalized_slot_start = normalize_datetime(slot_start_at)
+    normalized_doctor_id = doctor_id.strip()
+    if not normalized_doctor_id or normalized_slot_start is None:
+        return None
+
+    return f"{normalized_doctor_id}:{normalized_slot_start.isoformat()}"
+
+
 def parse_time_slot_window(
     time_slot: str,
     reference: datetime | None = None,

@@ -243,8 +243,31 @@ export const authService = {
     gender: string,
     location: string,
     hasPreviousStressIssues: boolean,
-    phone_number?: string
+    phone_number?: string,
+    medicalDocument?: File | null,
   ): Promise<any> {
+    if (medicalDocument) {
+      const formData = new FormData();
+      formData.append('name', name);
+      formData.append('email', email);
+      formData.append('password', password);
+      formData.append('age', String(age));
+      formData.append('gender', gender);
+      formData.append('location', location);
+      formData.append('has_previous_stress_issues', String(hasPreviousStressIssues));
+      if (phone_number) {
+        formData.append('phone_number', phone_number);
+      }
+      formData.append('medical_document', medicalDocument);
+
+      const { data } = await api.post('/api/auth/register/user-with-document', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return data;
+    }
+
     const { data } = await api.post('/api/auth/register/user', {
       name,
       email,

@@ -23,11 +23,12 @@ from ..nmc_verification import (
     get_state_medical_councils,
     verify_doctor_registration,
 )
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ValidationError
 import re
 import os
 import shutil
 from pathlib import Path
+from pymongo.errors import DuplicateKeyError
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -39,6 +40,97 @@ def validate_license_number(license_number: str) -> bool:
     """Validate doctor registration/license number format"""
     pattern = r"^[A-Za-z0-9\-]{4,30}$"
     return bool(re.match(pattern, license_number.strip()))
+
+
+def _ensure_user_email_available(email: str) -> None:
+    existing_user = users_collection.find_one({"email": email})
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+    existing_doctor = doctors_collection.find_one({"email": email})
+    if existing_doctor:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered as a doctor account"
+        )
+
+    existing_admin = admin_collection.find_one({"email": email})
+    if existing_admin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+
+def _store_medical_document(file: UploadFile, user_id: str) -> str:
+    filename = file.filename if file.filename else "document"
+    allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
+    file_ext = os.path.splitext(filename)[1].lower()
+
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not allowed. Allowed types: {', '.join(sorted(allowed_extensions))}"
+        )
+
+    max_size = 10 * 1024 * 1024
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+
+    if file_size > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds 10MB limit"
+        )
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    safe_filename = f"{user_id}_{timestamp}{file_ext}"
+    file_path = UPLOAD_DIR / safe_filename
+
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save file: {str(exc)}"
+        ) from exc
+
+    return safe_filename
+
+
+def _build_user_registration_response(
+    user: UserRegister,
+    user_id: str,
+    *,
+    medical_document_uploaded: bool = False,
+) -> dict:
+    message = "Registration successful! Please check your email for the verification code."
+    if medical_document_uploaded:
+        message = (
+            "Registration successful! Your medical document was uploaded. "
+            "Please check your email for the verification code."
+        )
+
+    return {
+        "user": {
+            "id": user_id,
+            "name": user.name,
+            "email": user.email,
+            "role": "user",
+            "age": user.age,
+            "gender": user.gender,
+            "location": user.location,
+            "email_verified": False
+        },
+        "message": message,
+        "access_token": "",
+        "token_type": "bearer"
+    }
 
 
 # ── Forgot Password Request Models ───────────────────────────────────────────
@@ -68,28 +160,8 @@ async def get_doctor_state_medical_councils():
 @router.post("/register/user", response_model=TokenResponse)
 async def register_user(user: UserRegister):
     """Register a new user - sends OTP for verification"""
-    
-    existing_user = users_collection.find_one({"email": user.email})
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    existing_doctor = doctors_collection.find_one({"email": user.email})
-    if existing_doctor:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered as a doctor account"
-        )
-    
-    existing_admin = admin_collection.find_one({"email": user.email})
-    if existing_admin:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
+    _ensure_user_email_available(user.email)
+
     user_dict = {
         "name": user.name,
         "email": user.email,
@@ -106,7 +178,13 @@ async def register_user(user: UserRegister):
         "test_history": []
     }
     
-    result = users_collection.insert_one(user_dict)
+    try:
+        result = users_collection.insert_one(user_dict)
+    except DuplicateKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        ) from exc
     user_id = str(result.inserted_id)
     
     otp = generate_otp()
@@ -114,22 +192,96 @@ async def register_user(user: UserRegister):
     email_service.send_otp_email(user.email, otp, "user")
     if user.phone_number:
         sms_service.send_otp_sms(user.phone_number, otp, "user")
-    
-    return {
-        "user": {
-            "id": user_id,
-            "name": user.name,
-            "email": user.email,
-            "role": "user",
-            "age": user.age,
-            "gender": user.gender,
-            "location": user.location,
-            "email_verified": False
-        },
-        "message": "Registration successful! Please check your email for the verification code.",
-        "access_token": "",
-        "token_type": "bearer"
+
+    return _build_user_registration_response(user, user_id)
+
+
+@router.post("/register/user-with-document", response_model=TokenResponse)
+async def register_user_with_document(
+    name: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    age: int = Form(...),
+    gender: str = Form(...),
+    location: str = Form(...),
+    has_previous_stress_issues: bool = Form(False),
+    phone_number: Optional[str] = Form(None),
+    medical_document: UploadFile = File(...),
+):
+    """Register a new user with an initial medical document upload."""
+
+    try:
+        user = UserRegister(
+            name=name,
+            email=email,
+            password=password,
+            age=age,
+            gender=gender,
+            location=location,
+            has_previous_stress_issues=has_previous_stress_issues,
+            phone_number=phone_number,
+        )
+    except ValidationError as exc:
+        messages = "; ".join(error.get("msg", "Invalid value") for error in exc.errors())
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=messages or "Invalid registration data",
+        ) from exc
+
+    _ensure_user_email_available(user.email)
+
+    user_object_id = ObjectId()
+    safe_filename = _store_medical_document(medical_document, str(user_object_id))
+
+    user_dict = {
+        "_id": user_object_id,
+        "name": user.name,
+        "email": user.email,
+        "password": get_password_hash(user.password),
+        "age": user.age,
+        "gender": user.gender,
+        "location": user.location,
+        "has_previous_stress_issues": user.has_previous_stress_issues,
+        "phone_number": user.phone_number or "",
+        "medical_document_path": safe_filename,
+        "role": "user",
+        "email_verified": False,
+        "created_at": datetime.utcnow(),
+        "test_history": []
     }
+
+    try:
+        users_collection.insert_one(user_dict)
+    except DuplicateKeyError as exc:
+        try:
+            (UPLOAD_DIR / safe_filename).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        ) from exc
+    except Exception as exc:
+        try:
+            (UPLOAD_DIR / safe_filename).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create user account",
+        ) from exc
+
+    otp = generate_otp()
+    store_otp(user.email, otp, "user")
+    email_service.send_otp_email(user.email, otp, "user")
+    if user.phone_number:
+        sms_service.send_otp_sms(user.phone_number, otp, "user")
+
+    return _build_user_registration_response(
+        user,
+        str(user_object_id),
+        medical_document_uploaded=True,
+    )
 
 @router.post("/register/doctor", response_model=TokenResponse)
 async def register_doctor(doctor: DoctorRegister):
@@ -327,42 +479,8 @@ async def upload_medical_document(
     current_user: dict = Depends(require_role(["user"]))
 ):
     """Upload medical document for authenticated user"""
-    
     user_id = current_user["user_id"]
-    filename = file.filename if file.filename else "document"
-    
-    allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
-    file_ext = os.path.splitext(filename)[1].lower()
-    
-    if file_ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type not allowed. Allowed types: {', '.join(allowed_extensions)}"
-        )
-    
-    max_size = 10 * 1024 * 1024
-    file.file.seek(0, 2)
-    file_size = file.file.tell()
-    file.file.seek(0)
-    
-    if file_size > max_size:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File size exceeds 10MB limit"
-        )
-    
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    safe_filename = f"{user_id}_{timestamp}{file_ext}"
-    file_path = UPLOAD_DIR / safe_filename
-    
-    try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save file: {str(e)}"
-        )
+    safe_filename = _store_medical_document(file, user_id)
     
     users_collection.update_one(
         {"_id": ObjectId(user_id)},
