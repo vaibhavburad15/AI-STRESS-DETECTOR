@@ -14,6 +14,18 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _build_sharing_note_html(sharing_window_note: Optional[str]) -> str:
+    if not sharing_window_note:
+        return ""
+
+    return f"""
+                    <div class="info-box" style="border-color:#2563eb;">
+                        <h3 style="margin-top: 0;">Sharing Window</h3>
+                        <p>{sharing_window_note}</p>
+                    </div>
+    """
+
+
 class EmailService:
     def __init__(self):
         self.sender_email = os.getenv("SENDER_EMAIL", "")
@@ -289,8 +301,14 @@ class EmailService:
         _ = notes
         self.send_appointment_confirmation_email(user_email, user_name, doctor_name, appointment_time)
 
-    def send_appointment_approved_email(self, user_email: str, user_name: str,
-                                        doctor_name: str, appointment_time: str):
+    def send_appointment_approved_email(
+        self,
+        user_email: str,
+        user_name: str,
+        doctor_name: str,
+        appointment_time: str,
+        sharing_window_note: Optional[str] = None,
+    ):
         """Send appointment approval email (ASYNC - non-blocking)"""
         subject = "✅ Appointment Approved!"
         body = f"""
@@ -322,6 +340,7 @@ class EmailService:
                         <p><strong>Doctor:</strong> {doctor_name}</p>
                         <p><strong>Time:</strong> {appointment_time}</p>
                     </div>
+                    {_build_sharing_note_html(sharing_window_note)}
                     <h3>Before Your Appointment:</h3>
                     <ul>
                         <li>Prepare a list of questions or concerns</li>

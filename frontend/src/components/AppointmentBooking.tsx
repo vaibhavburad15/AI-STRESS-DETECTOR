@@ -240,11 +240,7 @@ export const AppointmentBooking: React.FC<AppointmentBookingProps> = ({ userId }
                               }
                             `}
                           >
-                            {new Date(slot).toLocaleTimeString('en-US', {
-                              hour: 'numeric',
-                              minute: '2-digit',
-                              hour12: true
-                            })}
+                            {formatSlot(slot)}
                           </button>
                         ))}
                       </div>

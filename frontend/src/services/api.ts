@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AdvancedAdminStats } from '../types';
+import type { AdvancedAdminStats, DoctorSharedDetails } from '../types';
 
 // For TypeScript users, you may need to add this to vite-env.d.ts:
 // interface ImportMetaEnv {
@@ -388,7 +388,28 @@ export const medicalRecordsService = {
   },
 
   async downloadRecord(recordId: string): Promise<Blob> {
-    const response = await api.get(`/api/medical-records/${recordId}/download`, {
+    const response = await api.get(`/api/medical-records/download/${recordId}`, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+};
+
+export const appointmentService = {
+  async updateDoctorSharing(appointmentId: string, shareWithDoctor: boolean): Promise<any> {
+    const { data } = await api.put(`/api/user/appointment/${appointmentId}/share-access`, {
+      share_with_doctor: shareWithDoctor,
+    });
+    return data;
+  },
+
+  async getDoctorSharedDetails(appointmentId: string): Promise<DoctorSharedDetails> {
+    const { data } = await api.get(`/api/doctor/appointment/${appointmentId}/shared-details`);
+    return data;
+  },
+
+  async downloadMedicalRecord(recordId: string): Promise<Blob> {
+    const response = await api.get(`/api/medical-records/download/${recordId}`, {
       responseType: 'blob',
     });
     return response.data;

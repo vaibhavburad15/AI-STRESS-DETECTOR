@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import api from '../services/api';
+import api, { appointmentService } from '../services/api';
 import { Calendar, Clock, FileText, CheckCircle, XCircle, Loader2, AlertCircle } from 'lucide-react';
 
 interface AppointmentListProps {
@@ -10,6 +10,7 @@ export const AppointmentList: React.FC<AppointmentListProps> = ({ userId }) => {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'completed' | 'rejected'>('all');
+  const [sharingAppointmentId, setSharingAppointmentId] = useState<string | null>(null);
 
   useEffect(() => {
     loadAppointments();
@@ -53,16 +54,32 @@ export const AppointmentList: React.FC<AppointmentListProps> = ({ userId }) => {
     return configs[status as keyof typeof configs] || configs.pending;
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
+  const formatAppointmentLabel = (appointment: any) => {
+    if (appointment.slot_label) return appointment.slot_label;
+    if (appointment.slot_start_at && appointment.slot_end_at) {
+      const start = new Date(appointment.slot_start_at);
+      const end = new Date(appointment.slot_end_at);
+      return `${start.toLocaleString()} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return appointment.time_slot;
+  };
+
+  const formatAccessDeadline = (appointment: any) => {
+    if (appointment.access_deadline_label) return appointment.access_deadline_label;
+    return appointment.access_expires_at ? new Date(appointment.access_expires_at).toLocaleString() : 'Unknown';
+  };
+
+  const handleToggleSharing = async (appointmentId: string, shareWithDoctor: boolean) => {
+    try {
+      setSharingAppointmentId(appointmentId);
+      const response = await appointmentService.updateDoctorSharing(appointmentId, shareWithDoctor);
+      alert(response.message || 'Sharing preference updated.');
+      await loadAppointments();
+    } catch (error: any) {
+      alert(error.response?.data?.detail || 'Failed to update sharing preference.');
+    } finally {
+      setSharingAppointmentId(null);
+    }
   };
 
   const filteredAppointments = appointments.filter(apt => 
@@ -170,7 +187,7 @@ export const AppointmentList: React.FC<AppointmentListProps> = ({ userId }) => {
                             </h4>
                             <p className="text-sm text-gray-600 flex items-center gap-1">
                               <Clock className="w-4 h-4" />
-                              {formatDate(appointment.time_slot)}
+                              {formatAppointmentLabel(appointment)}
                             </p>
                           </div>
                         </div>
@@ -194,6 +211,17 @@ export const AppointmentList: React.FC<AppointmentListProps> = ({ userId }) => {
                             year: 'numeric'
                           })}
                         </p>
+                        {appointment.data_access_message && (
+                          <p className={`text-sm ${appointment.data_access_active ? 'text-green-700' : 'text-gray-500'}`}>
+                            {appointment.data_access_message}
+                          </p>
+                        )}
+                        {(appointment.status === 'approved' || appointment.status === 'completed') &&
+                          appointment.access_expires_at && (
+                            <p className="text-xs text-gray-500">
+                              Sharing window closes: {formatAccessDeadline(appointment)}
+                            </p>
+                          )}
                       </div>
 
                       {/* Right: Status */}
@@ -207,13 +235,23 @@ export const AppointmentList: React.FC<AppointmentListProps> = ({ userId }) => {
                         </div>
 
                         {/* Actions based on status */}
-                        {appointment.status === 'approved' && (
-                          <div className="text-right">
-                            <p className="text-xs text-gray-600 mb-1">Join your appointment:</p>
-                            <button className="text-sm px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700">
-                              Start Video Call
-                            </button>
-                          </div>
+                        {appointment.can_manage_record_sharing && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSharing(appointment.id, !appointment.records_shared_with_doctor)}
+                            disabled={sharingAppointmentId === appointment.id}
+                            className={`text-sm px-3 py-2 rounded-lg text-white ${
+                              appointment.records_shared_with_doctor
+                                ? 'bg-slate-600 hover:bg-slate-700'
+                                : 'bg-blue-600 hover:bg-blue-700'
+                            } disabled:opacity-50`}
+                          >
+                            {sharingAppointmentId === appointment.id
+                              ? 'Updating...'
+                              : appointment.records_shared_with_doctor
+                              ? 'Stop Sharing'
+                              : 'Share Details'}
+                          </button>
                         )}
 
                         {appointment.status === 'pending' && (

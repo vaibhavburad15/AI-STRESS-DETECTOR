@@ -191,6 +191,7 @@ const MedicalRecordsManager: React.FC<Props> = ({ userId }) => {
       // Use shared api client with JWT auth
       const formDataToSend = new FormData();
       formDataToSend.append('file', uploadForm.file);
+      formDataToSend.append('user_id', userId);
       formDataToSend.append('record_name', uploadForm.record_name);
       formDataToSend.append('record_type', uploadForm.record_type);
       if (uploadForm.description) formDataToSend.append('description', uploadForm.description);

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 import json as _json
 import re as _re
@@ -9,11 +9,17 @@ from ..models import (
     TestSubmission, TestResponse, AppointmentCreate, AppointmentResponse,
     GetEnhancedRecommendationsRequest, RecommendationProgressCreate,
     RecommendationProgressComplete, UserAchievementsResponse, ProgressUpdate,
-    ChatbotMessage, ChatbotResponse, ProfileUpdate
+    ChatbotMessage, ChatbotResponse, ProfileUpdate, AppointmentShareUpdate
 )
 from ..database import (
     users_collection, tests_collection, appointments_collection, doctors_collection,
     achievements_collection, progress_collection
+)
+from ..appointment_access import (
+    add_access_state,
+    format_slot_window,
+    parse_time_slot_window,
+    require_doctor_user_access,
 )
 from ..auth import require_role
 from ml_model.predictor import predictor
@@ -43,13 +49,15 @@ analytics = create_analytics_engine(tests_collection, users_collection, appointm
 # ============================================
 
 @router.get("/profile/{user_id}")
-async def get_profile(user_id: str, current_user: dict = Depends(require_role(["user", "admin"]))):
+async def get_profile(user_id: str, current_user: dict = Depends(require_role(["user", "doctor", "admin"]))):
     """Get user profile by ID"""
     if not ObjectId.is_valid(user_id):
         raise HTTPException(status_code=400, detail="Invalid user ID")
 
-    if current_user["role"] != "admin" and current_user["user_id"] != user_id:
+    if current_user["role"] == "user" and current_user["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to view this profile")
+    if current_user["role"] == "doctor":
+        require_doctor_user_access(current_user, user_id)
 
     user = users_collection.find_one({"_id": ObjectId(user_id)})
     if not user:
@@ -1104,21 +1112,34 @@ async def get_user_appointments(user_id: str, current_user: dict = Depends(requi
         )
     
     appointments = list(appointments_collection.find({"user_id": user_id}).sort("created_at", -1))
-    
-    return [
-        {
-            "id": str(apt["_id"]),
-            "doctor_id": apt["doctor_id"],
-            "doctor_name": apt["doctor_name"],
-            "time_slot": apt["time_slot"],
-            "status": apt["status"],
-            "notes": apt.get("notes", ""),
-            "doctor_notes": apt.get("doctor_notes", ""),
-            "created_at": apt["created_at"],
-            "updated_at": apt.get("updated_at")
-        }
-        for apt in appointments
-    ]
+
+    response: list[dict[str, Any]] = []
+    for appointment in appointments:
+        enriched = add_access_state(appointment)
+        response.append(
+            {
+                "id": str(enriched["_id"]),
+                "doctor_id": enriched["doctor_id"],
+                "doctor_name": enriched["doctor_name"],
+                "time_slot": enriched["time_slot"],
+                "slot_label": enriched.get("slot_label"),
+                "status": enriched["status"],
+                "notes": enriched.get("notes", ""),
+                "doctor_notes": enriched.get("doctor_notes", ""),
+                "created_at": enriched["created_at"],
+                "updated_at": enriched.get("updated_at"),
+                "slot_start_at": enriched.get("slot_start_at"),
+                "slot_end_at": enriched.get("slot_end_at"),
+                "access_expires_at": enriched.get("access_expires_at"),
+                "records_shared_with_doctor": enriched.get("records_shared_with_doctor", False),
+                "can_manage_record_sharing": enriched.get("can_manage_record_sharing", False),
+                "data_access_active": enriched.get("data_access_active", False),
+                "data_access_message": enriched.get("data_access_message"),
+                "access_deadline_label": enriched.get("access_deadline_label"),
+            }
+        )
+
+    return response
 
 @router.post("/appointment/book", response_model=AppointmentResponse)
 async def book_appointment(appointment: AppointmentCreate, current_user: dict = Depends(require_role(["user"]))):
@@ -1144,11 +1165,35 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
         raise HTTPException(status_code=400, detail="Doctor is not verified")
     
     # ✅ FIX: Check for double-booking - ensure slot isn't already booked with correct statuses
-    existing_booking = appointments_collection.find_one({
-        "doctor_id": appointment.doctor_id,
-        "time_slot": appointment.time_slot,
-        "status": {"$in": ["pending", "approved", "confirmed"]}
-    })
+    try:
+        slot_start_at, slot_end_at = parse_time_slot_window(
+            appointment.time_slot,
+            reference=datetime.utcnow(),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid time slot format: {appointment.time_slot}",
+        ) from exc
+
+    access_expires_at = slot_end_at + timedelta(hours=1)
+    slot_label = format_slot_window(slot_start_at, slot_end_at)
+
+    existing_booking = appointments_collection.find_one(
+        {
+            "doctor_id": appointment.doctor_id,
+            "status": {"$in": ["pending", "approved", "confirmed"]},
+            "$or": [
+                {"slot_start_at": slot_start_at},
+                {
+                    "$and": [
+                        {"slot_start_at": {"$exists": False}},
+                        {"time_slot": appointment.time_slot},
+                    ]
+                },
+            ],
+        }
+    )
     if existing_booking:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1172,8 +1217,13 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
         "doctor_id": appointment.doctor_id,
         "doctor_name": doctor["name"],
         "time_slot": appointment.time_slot,
+        "slot_start_at": slot_start_at,
+        "slot_end_at": slot_end_at,
+        "access_expires_at": access_expires_at,
         "status": "pending",
         "notes": appointment.notes,
+        "records_shared_with_doctor": False,
+        "shared_with_doctor_at": None,
         "created_at": datetime.utcnow()
     }
     
@@ -1186,7 +1236,7 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
             user_email=user["email"],
             user_name=user["name"],
             doctor_name=doctor["name"],
-            appointment_time=appointment.time_slot,
+            appointment_time=slot_label,
             notes=appointment.notes or ""
         )
         print(f"✅ Appointment booking email sent to {user['email']}")
@@ -1199,7 +1249,7 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
                 phone=user["phone_number"],
                 user_name=user["name"],
                 doctor_name=doctor["name"],
-                appointment_time=appointment.time_slot,
+                appointment_time=slot_label,
                 notes=appointment.notes or ""
             )
     except Exception as e:
@@ -1213,9 +1263,91 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
         "doctor_id": appointment.doctor_id,
         "doctor_name": doctor["name"],
         "time_slot": appointment.time_slot,
+        "slot_start_at": slot_start_at,
+        "slot_end_at": slot_end_at,
+        "access_expires_at": access_expires_at,
         "status": "pending",
         "notes": appointment.notes,
+        "records_shared_with_doctor": False,
         "created_at": appointment_dict["created_at"]
+    }
+
+
+@router.put("/appointment/{appointment_id}/share-access")
+async def update_appointment_share_access(
+    appointment_id: str,
+    share_update: AppointmentShareUpdate,
+    current_user: dict = Depends(require_role(["user"])),
+):
+    """Allow a user to share appointment-scoped data access with their doctor."""
+    try:
+        appointment_object_id = ObjectId(appointment_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid appointment ID format",
+        ) from exc
+
+    appointment = appointments_collection.find_one({"_id": appointment_object_id})
+    if not appointment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+
+    if appointment.get("user_id") != current_user["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only manage sharing for your own appointments.",
+        )
+
+    enriched = add_access_state(appointment)
+    if appointment.get("status") not in {"approved", "completed"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You can share details only after the doctor confirms the appointment.",
+        )
+
+    if (
+        share_update.share_with_doctor
+        and enriched.get("access_expires_at") is not None
+        and datetime.utcnow() > enriched["access_expires_at"]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The sharing window has already ended for this appointment.",
+        )
+
+    update_payload: dict[str, Any] = {
+        "records_shared_with_doctor": share_update.share_with_doctor,
+        "shared_with_doctor_at": datetime.utcnow() if share_update.share_with_doctor else None,
+        "updated_at": datetime.utcnow(),
+    }
+    appointments_collection.update_one(
+        {"_id": appointment_object_id},
+        {"$set": update_payload},
+    )
+
+    updated_appointment = appointments_collection.find_one({"_id": appointment_object_id})
+    if not updated_appointment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+
+    enriched_updated = add_access_state(updated_appointment)
+    return {
+        "message": (
+            "Doctor access enabled for this appointment."
+            if share_update.share_with_doctor
+            else "Doctor access disabled for this appointment."
+        ),
+        "appointment": {
+            "id": str(enriched_updated["_id"]),
+            "records_shared_with_doctor": enriched_updated.get("records_shared_with_doctor", False),
+            "can_manage_record_sharing": enriched_updated.get("can_manage_record_sharing", False),
+            "data_access_active": enriched_updated.get("data_access_active", False),
+            "data_access_message": enriched_updated.get("data_access_message"),
+            "slot_start_at": enriched_updated.get("slot_start_at"),
+            "slot_end_at": enriched_updated.get("slot_end_at"),
+            "access_expires_at": enriched_updated.get("access_expires_at"),
+            "slot_label": enriched_updated.get("slot_label"),
+            "access_deadline_label": enriched_updated.get("access_deadline_label"),
+        },
     }
 
 # ============================================
@@ -1359,6 +1491,8 @@ async def get_test_explanation(test_id: str, current_user: dict = Depends(requir
 
     if current_user["role"] == "user" and current_user["user_id"] != test["user_id"]:
         raise HTTPException(status_code=403, detail="You can only access your own test results")
+    if current_user["role"] == "doctor":
+        require_doctor_user_access(current_user, test["user_id"])
 
     # Return stored explanation if present, otherwise recompute
     if test.get("explanation"):
@@ -1412,6 +1546,8 @@ async def get_test_report(test_id: str, current_user: dict = Depends(require_rol
 
     if current_user["role"] == "user" and current_user["user_id"] != test["user_id"]:
         raise HTTPException(status_code=403, detail="You can only access your own test results")
+    if current_user["role"] == "doctor":
+        require_doctor_user_access(current_user, test["user_id"])
 
     user = users_collection.find_one({"_id": ObjectId(test["user_id"])})
     user_name = user.get("name", "User") if user else "User"
@@ -1435,6 +1571,8 @@ async def get_stress_trend(user_id: str, current_user: dict = Depends(require_ro
     """Get stress trend analysis for a user"""
     if current_user["role"] == "user" and current_user["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="You can only access your own trends")
+    if current_user["role"] == "doctor":
+        require_doctor_user_access(current_user, user_id)
 
     try:
         ObjectId(user_id)

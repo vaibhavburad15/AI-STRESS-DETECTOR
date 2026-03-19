@@ -17,7 +17,7 @@ import {
   Stethoscope,
   Video,
 } from 'lucide-react';
-import { authService } from '../services/api';
+import { appointmentService, authService } from '../services/api';
 import api from '../services/api';
 import type { Appointment, Doctor, Question, Test, ChatbotResponse } from '../types';
 import type { EnhancedTest } from '../types';
@@ -83,6 +83,7 @@ const UserDashboard = () => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [showVideoModal, setShowVideoModal] = useState(false);
+  const [sharingAppointmentId, setSharingAppointmentId] = useState<string | null>(null);
 
   // Chatbot state
   const [chatMessages, setChatMessages] = useState<Array<{type: 'user' | 'bot', content: string, stressLevel?: number, stressLabel?: string, confidence?: number}>>([]);
@@ -230,12 +231,16 @@ const UserDashboard = () => {
 
   const handleBookAppointment = async (doctorId: string, timeSlot: string) => {
     try {
-      await api.post('/api/user/appointment/book', {
+      const { data } = await api.post('/api/user/appointment/book', {
         // ✅ FIX: Don't send user_id from client, use authenticated user
         doctor_id: doctorId,
         time_slot: timeSlot,
       });
-      alert('Appointment booked successfully');
+      const slotText =
+        data?.slot_start_at && data?.slot_end_at
+          ? `${new Date(data.slot_start_at).toLocaleString()} - ${new Date(data.slot_end_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+          : 'Appointment booked successfully';
+      alert(`Appointment booked successfully.\n${slotText}`);
       loadAppointments();
     } catch (error: any) {
       alert(`Failed to book appointment: ${error.response?.data?.detail || error.message}`);
@@ -303,6 +308,37 @@ const UserDashboard = () => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatAppointmentLabel = (appointment: Appointment) => {
+    if (appointment.slot_label) return appointment.slot_label;
+    if (appointment.slot_start_at && appointment.slot_end_at) {
+      const start = new Date(appointment.slot_start_at);
+      const end = new Date(appointment.slot_end_at);
+      return `${start.toLocaleString()} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return appointment.time_slot;
+  };
+
+  const formatAccessDeadline = (appointment: Appointment) => {
+    if (appointment.access_deadline_label) return appointment.access_deadline_label;
+    if (appointment.access_expires_at) {
+      return new Date(appointment.access_expires_at).toLocaleString();
+    }
+    return 'Unknown';
+  };
+
+  const handleToggleDoctorShare = async (appointmentId: string, shareWithDoctor: boolean) => {
+    try {
+      setSharingAppointmentId(appointmentId);
+      const response = await appointmentService.updateDoctorSharing(appointmentId, shareWithDoctor);
+      alert(response.message || 'Sharing preference updated.');
+      await loadAppointments();
+    } catch (error: any) {
+      alert(error.response?.data?.detail || 'Failed to update sharing preference.');
+    } finally {
+      setSharingAppointmentId(null);
+    }
   };
 
   return (
@@ -453,7 +489,7 @@ const UserDashboard = () => {
                     {featuredAppointment ? (
                       <div className="space-y-3">
                         <p className="text-xl font-semibold text-slate-900">{featuredAppointment.doctor_name}</p>
-                        <p className="text-sm text-slate-600">{featuredAppointment.time_slot}</p>
+                        <p className="text-sm text-slate-600">{formatAppointmentLabel(featuredAppointment)}</p>
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(featuredAppointment.status)}`}>
                           {featuredAppointment.status.toUpperCase()}
                         </span>
@@ -870,14 +906,50 @@ const UserDashboard = () => {
                 ) : (
                   <div className="space-y-3">
                     {appointments.map((apt) => (
-                      <div key={apt.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-white p-4">
-                        <div>
-                          <p className="text-lg font-semibold text-slate-900">{apt.doctor_name}</p>
-                          <p className="text-sm text-slate-600">{apt.time_slot}</p>
+                      <div key={apt.id} className="rounded-xl border border-blue-100 bg-white p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                          <div className="space-y-2">
+                            <p className="text-lg font-semibold text-slate-900">{apt.doctor_name}</p>
+                            <p className="text-sm text-slate-600">{formatAppointmentLabel(apt)}</p>
+                            {apt.doctor_notes && (
+                              <p className="text-sm text-slate-600">
+                                Doctor note: {apt.doctor_notes}
+                              </p>
+                            )}
+                            {apt.data_access_message && (
+                              <p className={`text-sm ${apt.data_access_active ? 'text-emerald-700' : 'text-slate-500'}`}>
+                                {apt.data_access_message}
+                              </p>
+                            )}
+                            {(apt.status === 'approved' || apt.status === 'completed') && apt.access_expires_at && (
+                              <p className="text-xs text-slate-500">
+                                Sharing window closes: {formatAccessDeadline(apt)}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex flex-col items-end gap-2">
+                            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(apt.status)}`}>
+                              {apt.status.toUpperCase()}
+                            </span>
+                            {apt.can_manage_record_sharing && (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleDoctorShare(apt.id, !apt.records_shared_with_doctor)}
+                                disabled={sharingAppointmentId === apt.id}
+                                className={`rounded-lg px-3 py-2 text-xs font-semibold text-white ${
+                                  apt.records_shared_with_doctor ? 'bg-slate-600 hover:bg-slate-700' : 'bg-blue-600 hover:bg-blue-700'
+                                } disabled:opacity-50`}
+                              >
+                                {sharingAppointmentId === apt.id
+                                  ? 'Updating...'
+                                  : apt.records_shared_with_doctor
+                                  ? 'Stop Sharing Details'
+                                  : 'Share Details With Doctor'}
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(apt.status)}`}>
-                          {apt.status.toUpperCase()}
-                        </span>
                       </div>
                     ))}
                   </div>

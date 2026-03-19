@@ -35,6 +35,7 @@ from ..database import (
     users_collection, tests_collection, medical_records_collection,
     medical_record_activities_collection
 )
+from ..appointment_access import require_doctor_user_access
 from ..auth import require_role
 from ..recommendation_engine import enhanced_engine
 
@@ -307,6 +308,8 @@ async def get_user_medical_records(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only access your own medical records"
         )
+    if current_user["role"] == "doctor":
+        require_doctor_user_access(current_user, user_id)
     
     # Build query
     query = {"user_id": user_id, "deleted": False}
@@ -384,6 +387,8 @@ async def get_medical_record(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only access your own medical records"
         )
+    if current_user["role"] == "doctor":
+        require_doctor_user_access(current_user, record["user_id"])
     
     return {
         "id": str(record["_id"]),
@@ -814,6 +819,8 @@ async def download_medical_record(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only download your own medical records"
         )
+    if current_user["role"] == "doctor":
+        require_doctor_user_access(current_user, record["user_id"])
 
     # ── Stress test: generate PDF regardless of how it was stored ─
     is_stress = (

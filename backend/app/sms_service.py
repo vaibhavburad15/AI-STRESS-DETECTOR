@@ -175,13 +175,15 @@ class SMSService:
         user_name: str,
         doctor_name: str,
         appointment_time: str,
+        sharing_window_note: Optional[str] = None,
     ):
+        note = " Enable sharing in your dashboard for appointment-time access." if sharing_window_note else ""
         self._fire(
             self._send_text_sync,
             phone,
             (
                 f"Great news {user_name}. Your appointment with Dr. {doctor_name} at "
-                f"{appointment_time} is confirmed."
+                f"{appointment_time} is confirmed.{note}"
             ),
         )
 

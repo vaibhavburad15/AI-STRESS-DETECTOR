@@ -1,399 +1,379 @@
-"""
-OPTIMIZED doctor_routes.py - WITH AGGREGATION PIPELINE
-Location: backend/app/routes/doctor_routes.py
-Action: REPLACE your existing file with this one
+from __future__ import annotations
 
-KEY CHANGES:
-1. Uses MongoDB aggregation to fetch appointments + tests in ONE query
-2. Emails sent asynchronously (non-blocking)
-Result: Saves 5-15 seconds on appointment listing!
-"""
-
-from fastapi import APIRouter, HTTPException, status, Depends
-from bson import ObjectId
 from datetime import datetime
 from typing import Any, Mapping
-from ..models import AppointmentUpdate
-from ..database import appointments_collection, tests_collection, users_collection
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from bson import ObjectId
+
+from ..appointment_access import (
+    add_access_state,
+    get_appointment_by_id,
+    require_doctor_appointment_data_access,
+    require_doctor_owned_appointment,
+)
 from ..auth import require_role
+from ..database import (
+    appointments_collection,
+    medical_records_collection,
+    tests_collection,
+    users_collection,
+)
 from ..email_service import email_service
+from ..models import AppointmentUpdate
 from ..sms_service import sms_service
 
 router = APIRouter(prefix="/api/doctor", tags=["Doctor"])
 
 
 def _build_email_context(appointment: Mapping[str, Any]) -> tuple[str | None, str, str, str]:
-    """Normalize appointment fields to safe string values for email templates."""
     user_email_raw = appointment.get("user_email")
     user_email = user_email_raw if isinstance(user_email_raw, str) and user_email_raw else None
     user_name = str(appointment.get("user_name") or "User")
     doctor_name = str(appointment.get("doctor_name") or "Doctor")
-    time_slot = str(appointment.get("time_slot") or "Scheduled time")
+    time_slot = str(appointment.get("slot_label") or appointment.get("time_slot") or "Scheduled time")
     return user_email, user_name, doctor_name, time_slot
 
+
 def _get_user_phone(appointment: Mapping[str, Any]) -> str | None:
-    """Fetch phone_number from users_collection for a given appointment."""
-    try:
-        from bson import ObjectId as _ObjId
-        user_id = appointment.get("user_id")
-        if not user_id:
-            return None
-        user = users_collection.find_one({"_id": _ObjId(str(user_id))})
-        phone = user.get("phone_number") if user else None
-        return phone if isinstance(phone, str) and phone else None
-    except Exception as ex:
-        print(f"⚠️ Could not fetch user phone: {ex}")
+    user_id = str(appointment.get("user_id") or "").strip()
+    if not user_id:
         return None
 
+    try:
+        from bson import ObjectId as _ObjectId
+
+        user = users_collection.find_one({"_id": _ObjectId(user_id)})
+        phone = user.get("phone_number") if user else None
+        return phone if isinstance(phone, str) and phone else None
+    except Exception as exc:
+        print(f"Warning: could not fetch user phone: {exc}")
+        return None
+
+
+def _serialize_test(test: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(test["_id"]),
+        "user_id": test.get("user_id"),
+        "stress_level": test["stress_level"],
+        "stress_label": test["stress_label"],
+        "confidence_score": test["confidence_score"],
+        "responses": test.get("responses", []),
+        "recommendations": test.get("recommendations", []),
+        "timestamp": test["timestamp"],
+    }
+
+
+def _serialize_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(record["_id"]),
+        "record_name": record.get("record_name"),
+        "record_type": record.get("record_type"),
+        "file_name": record.get("file_name"),
+        "file_size": record.get("file_size", 0),
+        "file_format": record.get("file_format"),
+        "description": record.get("description"),
+        "record_date": record.get("record_date"),
+        "doctor_name": record.get("doctor_name"),
+        "hospital_name": record.get("hospital_name"),
+        "notes": record.get("notes"),
+        "tags": record.get("tags", []),
+        "uploaded_at": record.get("uploaded_at"),
+        "updated_at": record.get("updated_at"),
+        "download_count": record.get("download_count", 0),
+        "is_linked_to_stress_test": record.get("is_linked_to_stress_test", False),
+        "linked_test_id": record.get("linked_test_id"),
+    }
+
+
+def _build_sharing_window_note(appointment: Mapping[str, Any]) -> str | None:
+    slot_label = str(appointment.get("slot_label") or "").strip()
+    access_deadline = str(appointment.get("access_deadline_label") or "").strip()
+    if not slot_label or not access_deadline:
+        return None
+
+    return (
+        "In your dashboard, enable 'Share details with doctor' for this appointment. "
+        f"Once enabled, the doctor can view your profile, stress assessments, and medical records "
+        f"during {slot_label} and until {access_deadline}."
+    )
+
+
+def _get_recent_tests_for_user(user_id: str, limit: int = 5) -> list[dict[str, Any]]:
+    tests = list(tests_collection.find({"user_id": user_id}).sort("timestamp", -1).limit(limit))
+    return [_serialize_test(test) for test in tests]
+
+
+def _serialize_appointment_for_dashboard(appointment: Mapping[str, Any]) -> dict[str, Any]:
+    enriched = add_access_state(appointment)
+    test_history = _get_recent_tests_for_user(enriched["user_id"], limit=5) if enriched.get("data_access_active") else []
+    latest_test = test_history[0] if test_history else None
+
+    return {
+        "id": str(enriched["_id"]),
+        "user_id": enriched["user_id"],
+        "user_name": enriched["user_name"],
+        "user_email": enriched.get("user_email"),
+        "doctor_id": enriched["doctor_id"],
+        "doctor_name": enriched["doctor_name"],
+        "time_slot": enriched["time_slot"],
+        "slot_label": enriched.get("slot_label"),
+        "status": enriched["status"],
+        "notes": enriched.get("notes", ""),
+        "doctor_notes": enriched.get("doctor_notes", ""),
+        "created_at": enriched["created_at"],
+        "updated_at": enriched.get("updated_at"),
+        "slot_start_at": enriched.get("slot_start_at"),
+        "slot_end_at": enriched.get("slot_end_at"),
+        "access_expires_at": enriched.get("access_expires_at"),
+        "records_shared_with_doctor": enriched.get("records_shared_with_doctor", False),
+        "data_access_active": enriched.get("data_access_active", False),
+        "data_access_message": enriched.get("data_access_message"),
+        "access_deadline_label": enriched.get("access_deadline_label"),
+        "test_history": test_history,
+        "latest_test": latest_test,
+    }
+
+
+def _send_status_notifications(appointment: Mapping[str, Any], update: AppointmentUpdate) -> None:
+    enriched = add_access_state(appointment)
+    user_email, user_name, doctor_name, time_slot = _build_email_context(enriched)
+    sharing_window_note = _build_sharing_window_note(enriched)
+
+    if user_email:
+        if update.status == "approved":
+            email_service.send_appointment_approved_email(
+                user_email=user_email,
+                user_name=user_name,
+                doctor_name=doctor_name,
+                appointment_time=time_slot,
+                sharing_window_note=sharing_window_note,
+            )
+        elif update.status == "rejected":
+            email_service.send_appointment_rejected_email(
+                user_email=user_email,
+                user_name=user_name,
+                doctor_name=doctor_name,
+                appointment_time=time_slot,
+                rejection_reason=update.notes or "Time slot no longer available",
+            )
+        elif update.status == "completed":
+            email_service.send_appointment_completed_email(
+                user_email=user_email,
+                user_name=user_name,
+                doctor_name=doctor_name,
+                appointment_time=time_slot,
+            )
+
+    user_phone = _get_user_phone(appointment)
+    if not user_phone:
+        return
+
+    if update.status == "approved":
+        sms_service.send_appointment_approved_sms(
+            phone=user_phone,
+            user_name=user_name,
+            doctor_name=doctor_name,
+            appointment_time=time_slot,
+            sharing_window_note=sharing_window_note,
+        )
+    elif update.status == "rejected":
+        sms_service.send_appointment_rejected_sms(
+            phone=user_phone,
+            user_name=user_name,
+            doctor_name=doctor_name,
+            appointment_time=time_slot,
+            rejection_reason=update.notes or "Time slot no longer available",
+        )
+    elif update.status == "completed":
+        sms_service.send_appointment_completed_sms(
+            phone=user_phone,
+            user_name=user_name,
+            doctor_name=doctor_name,
+            appointment_time=time_slot,
+        )
+
+
+def _update_appointment_status_impl(
+    appointment_id: str,
+    update: AppointmentUpdate,
+    current_user: Mapping[str, Any],
+) -> dict[str, Any]:
+    appointment = get_appointment_by_id(appointment_id)
+    require_doctor_owned_appointment(current_user, appointment)
+
+    valid_statuses = ["pending", "approved", "rejected", "completed"]
+    if update.status not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status. Must be one of: {valid_statuses}",
+        )
+
+    update_data: dict[str, Any] = {
+        "status": update.status,
+        "updated_at": datetime.utcnow(),
+    }
+    if update.notes:
+        update_data["doctor_notes"] = update.notes
+
+    appointments_collection.update_one(
+        {"_id": appointment["_id"]},
+        {"$set": update_data},
+    )
+
+    updated_appointment = dict(appointment)
+    updated_appointment.update(update_data)
+    _send_status_notifications(updated_appointment, update)
+
+    return {
+        "message": f"Appointment status updated to {update.status}",
+        "appointment_id": appointment_id,
+        "status": update.status,
+    }
+
+
 @router.get("/appointments/{doctor_id}")
-async def get_doctor_appointments(doctor_id: str, current_user: dict = Depends(require_role(["doctor"]))):
-    """Get doctor's appointments with patient details (OPTIMIZED with aggregation)"""
-    
-    # ✅ OPTIMIZED: Use aggregation pipeline to fetch appointments + tests in ONE query
-    pipeline = [
-        # Match appointments for this doctor
-        {"$match": {"doctor_id": doctor_id}},
-        
-        # Sort by creation date (newest first)
-        {"$sort": {"created_at": -1}},
-        
-        # Lookup patient tests (join operation)
-        {
-            "$lookup": {
-                "from": "tests",
-                "let": {"user_id_var": "$user_id"},
-                "pipeline": [
-                    {"$match": {
-                        "$expr": {"$eq": ["$user_id", "$$user_id_var"]}
-                    }},
-                    {"$sort": {"timestamp": -1}},
-                    {"$limit": 5},
-                    {"$project": {
-                        "_id": 1,
-                        "stress_level": 1,
-                        "stress_label": 1,
-                        "confidence_score": 1,
-                        "responses": 1,
-                        "recommendations": 1,
-                        "timestamp": 1
-                    }}
-                ],
-                "as": "patient_tests"
-            }
-        }
-    ]
-    
-    # Execute aggregation (ONE database query instead of N+1!)
-    appointments = list(appointments_collection.aggregate(pipeline))
-    
-    # Format response
-    detailed_appointments = []
-    for apt in appointments:
-        # Get tests from aggregation result
-        user_tests = apt.get("patient_tests", [])
-        
-        # Format test history
-        test_history = [
-            {
-                "id": str(test["_id"]),
-                "stress_level": test["stress_level"],
-                "stress_label": test["stress_label"],
-                "confidence_score": test["confidence_score"],
-                "timestamp": test["timestamp"]
-            }
-            for test in user_tests
-        ]
-        
-        # Get latest test details if exists
-        latest_test = None
-        if user_tests:
-            latest = user_tests[0]
-            latest_test = {
-                "id": str(latest["_id"]),
-                "stress_level": latest["stress_level"],
-                "stress_label": latest["stress_label"],
-                "confidence_score": latest["confidence_score"],
-                "responses": latest.get("responses", []),
-                "recommendations": latest.get("recommendations", []),
-                "timestamp": latest["timestamp"]
-            }
-        
-        detailed_appointments.append({
-            "id": str(apt["_id"]),
-            "user_id": apt["user_id"],
-            "user_name": apt["user_name"],
-            "user_email": apt["user_email"],
-            "time_slot": apt["time_slot"],
-            "status": apt["status"],
-            "notes": apt.get("notes", ""),
-            "created_at": apt["created_at"],
-            "test_history": test_history,
-            "latest_test": latest_test
-        })
-    
-    return detailed_appointments
+async def get_doctor_appointments(
+    doctor_id: str,
+    current_user: dict = Depends(require_role(["doctor"])),
+):
+    """Get the authenticated doctor's appointments with scoped access metadata."""
+    authenticated_doctor_id = str(current_user.get("user_id") or "")
+    if doctor_id != authenticated_doctor_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own appointments.",
+        )
+
+    appointments = list(
+        appointments_collection.find({"doctor_id": authenticated_doctor_id}).sort("created_at", -1)
+    )
+    return [_serialize_appointment_for_dashboard(appointment) for appointment in appointments]
+
 
 @router.get("/appointment/{appointment_id}/patient-tests")
 async def get_patient_tests_for_appointment(
-    appointment_id: str, 
-    current_user: dict = Depends(require_role(["doctor"]))
+    appointment_id: str,
+    current_user: dict = Depends(require_role(["doctor"])),
 ):
-    """Get detailed patient test information for an appointment"""
-    appointment = appointments_collection.find_one({"_id": ObjectId(appointment_id)})
-    
-    if not appointment:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    
-    # Get all patient tests
-    user_tests = list(tests_collection.find(
-        {"user_id": appointment["user_id"]}
-    ).sort("timestamp", -1))
-    
-    detailed_tests = []
-    for test in user_tests:
-        detailed_tests.append({
-            "id": str(test["_id"]),
-            "stress_level": test["stress_level"],
-            "stress_label": test["stress_label"],
-            "confidence_score": test["confidence_score"],
-            "responses": test["responses"],
-            "recommendations": test["recommendations"],
-            "timestamp": test["timestamp"]
-        })
-    
+    """Get detailed patient test information for an appointment during the active access window."""
+    appointment = get_appointment_by_id(appointment_id)
+    enriched = require_doctor_appointment_data_access(current_user, appointment)
+    user_tests = list(tests_collection.find({"user_id": enriched["user_id"]}).sort("timestamp", -1))
+
     return {
-        "patient_name": appointment["user_name"],
-        "patient_email": appointment["user_email"],
-        "appointment_time": appointment["time_slot"],
-        "tests": detailed_tests
+        "patient_name": enriched["user_name"],
+        "patient_email": enriched.get("user_email"),
+        "appointment_time": enriched.get("slot_label") or enriched["time_slot"],
+        "access_expires_at": enriched.get("access_expires_at"),
+        "tests": [_serialize_test(test) for test in user_tests],
     }
+
+
+@router.get("/appointment/{appointment_id}/shared-details")
+async def get_appointment_shared_details(
+    appointment_id: str,
+    current_user: dict = Depends(require_role(["doctor"])),
+):
+    """Return profile, test, and medical-record data for the active shared appointment window."""
+    appointment = get_appointment_by_id(appointment_id)
+    enriched = require_doctor_appointment_data_access(current_user, appointment)
+
+    user = users_collection.find_one({"_id": ObjectId(enriched["user_id"])})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    tests = list(tests_collection.find({"user_id": enriched["user_id"]}).sort("timestamp", -1))
+    records = list(
+        medical_records_collection.find(
+            {"user_id": enriched["user_id"], "deleted": False}
+        ).sort("uploaded_at", -1)
+    )
+
+    return {
+        "appointment": {
+            "id": str(enriched["_id"]),
+            "status": enriched["status"],
+            "time_slot": enriched["time_slot"],
+            "slot_label": enriched.get("slot_label"),
+            "slot_start_at": enriched.get("slot_start_at"),
+            "slot_end_at": enriched.get("slot_end_at"),
+            "access_expires_at": enriched.get("access_expires_at"),
+            "data_access_message": enriched.get("data_access_message"),
+        },
+        "patient": {
+            "id": str(user["_id"]),
+            "name": user.get("name"),
+            "email": user.get("email"),
+            "age": user.get("age"),
+            "gender": user.get("gender"),
+            "location": user.get("location"),
+            "phone_number": user.get("phone_number"),
+            "has_previous_stress_issues": user.get("has_previous_stress_issues", False),
+            "created_at": user.get("created_at"),
+        },
+        "tests": [_serialize_test(test) for test in tests],
+        "medical_records": [_serialize_record(record) for record in records],
+    }
+
 
 @router.put("/appointment/{appointment_id}")
 async def update_appointment(
     appointment_id: str,
     update: AppointmentUpdate,
-    current_user: dict = Depends(require_role(["doctor"]))
+    current_user: dict = Depends(require_role(["doctor"])),
 ):
-    """Update appointment status and notes (primary endpoint) - OPTIMIZED"""
-    
-    # Get appointment
-    appointment = appointments_collection.find_one({"_id": ObjectId(appointment_id)})
-    if not appointment:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    
-    # Verify doctor owns this appointment
-    doctor_id = current_user.get('user_id') or current_user.get('id')
-    if appointment["doctor_id"] != doctor_id:
-        raise HTTPException(status_code=403, detail="Not authorized to update this appointment")
-    
-    # Validate status
-    valid_statuses = ["pending", "approved", "rejected", "completed"]
-    if update.status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
-    
-    # Update appointment
-    update_data = {
-        "status": update.status,
-        "updated_at": datetime.utcnow()
-    }
-    
-    if update.notes:
-        update_data["doctor_notes"] = update.notes
-    
-    appointments_collection.update_one(
-        {"_id": ObjectId(appointment_id)},
-        {"$set": update_data}
-    )
-    
-    # ✅ OPTIMIZED: Send emails ASYNCHRONOUSLY (doesn't block response!)
-    # Get user email details
-    user_email, user_name, doctor_name, time_slot = _build_email_context(appointment)
-    
-    if user_email:
-        if update.status == "approved":
-            email_service.send_appointment_approved_email(
-                user_email=user_email,
-                user_name=user_name,
-                doctor_name=doctor_name,
-                appointment_time=time_slot
-            )
-            print(f"📧 Approval email queued for {user_email}")
-            
-        elif update.status == "rejected":
-            email_service.send_appointment_rejected_email(
-                user_email=user_email,
-                user_name=user_name,
-                doctor_name=doctor_name,
-                appointment_time=time_slot,
-                rejection_reason=update.notes or "Time slot no longer available"
-            )
-            print(f"📧 Rejection email queued for {user_email}")
-            
-        elif update.status == "completed":
-            email_service.send_appointment_completed_email(
-                user_email=user_email,
-                user_name=user_name,
-                doctor_name=doctor_name,
-                appointment_time=time_slot
-            )
-            print(f"📧 Completion email queued for {user_email}")
+    """Update appointment status and notes."""
+    return _update_appointment_status_impl(appointment_id, update, current_user)
 
-    # ✅ SMS notifications (parallel to email)
-    user_phone = _get_user_phone(appointment)
-    if user_phone:
-        if update.status == "approved":
-            sms_service.send_appointment_approved_sms(
-                phone=user_phone, user_name=user_name,
-                doctor_name=doctor_name, appointment_time=time_slot
-            )
-        elif update.status == "rejected":
-            sms_service.send_appointment_rejected_sms(
-                phone=user_phone, user_name=user_name,
-                doctor_name=doctor_name, appointment_time=time_slot,
-                rejection_reason=update.notes or "Time slot no longer available"
-            )
-        elif update.status == "completed":
-            sms_service.send_appointment_completed_sms(
-                phone=user_phone, user_name=user_name,
-                doctor_name=doctor_name, appointment_time=time_slot
-            )
-        print(f"📱 SMS queued for {user_phone}")
-    
-    # Return immediately (email/SMS sends in background)
-    return {
-        "message": f"Appointment status updated to {update.status}",
-        "appointment_id": appointment_id,
-        "status": update.status
-    }
 
 @router.put("/appointment/{appointment_id}/status")
 async def update_appointment_status(
     appointment_id: str,
     update: AppointmentUpdate,
-    current_user: dict = Depends(require_role(["doctor"]))
+    current_user: dict = Depends(require_role(["doctor"])),
 ):
-    """Update appointment status (approve/reject/complete) - Alternative endpoint - OPTIMIZED"""
-    
-    # Get appointment
-    appointment = appointments_collection.find_one({"_id": ObjectId(appointment_id)})
-    if not appointment:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-    
-    # Verify doctor owns this appointment
-    doctor_id = current_user.get('user_id') or current_user.get('id')
-    if appointment["doctor_id"] != doctor_id:
-        raise HTTPException(status_code=403, detail="Not authorized to update this appointment")
-    
-    # Validate status
-    valid_statuses = ["pending", "approved", "rejected", "completed"]
-    if update.status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
-    
-    # Update appointment
-    update_data = {
-        "status": update.status,
-        "updated_at": datetime.utcnow()
-    }
-    
-    if update.notes:
-        update_data["doctor_notes"] = update.notes
-    
-    appointments_collection.update_one(
-        {"_id": ObjectId(appointment_id)},
-        {"$set": update_data}
-    )
-    
-    # ✅ OPTIMIZED: Send emails ASYNCHRONOUSLY (doesn't block response!)
-    user_email, user_name, doctor_name, time_slot = _build_email_context(appointment)
-    
-    if user_email:
-        if update.status == "approved":
-            email_service.send_appointment_approved_email(
-                user_email=user_email,
-                user_name=user_name,
-                doctor_name=doctor_name,
-                appointment_time=time_slot
-            )
-            print(f"📧 Approval email queued for {user_email}")
-            
-        elif update.status == "rejected":
-            email_service.send_appointment_rejected_email(
-                user_email=user_email,
-                user_name=user_name,
-                doctor_name=doctor_name,
-                appointment_time=time_slot,
-                rejection_reason=update.notes or "Time slot no longer available"
-            )
-            print(f"📧 Rejection email queued for {user_email}")
-            
-        elif update.status == "completed":
-            email_service.send_appointment_completed_email(
-                user_email=user_email,
-                user_name=user_name,
-                doctor_name=doctor_name,
-                appointment_time=time_slot
-            )
-            print(f"📧 Completion email queued for {user_email}")
+    """Update appointment status through the alternative status endpoint."""
+    return _update_appointment_status_impl(appointment_id, update, current_user)
 
-    # ✅ SMS notifications (parallel to email)
-    user_phone = _get_user_phone(appointment)
-    if user_phone:
-        if update.status == "approved":
-            sms_service.send_appointment_approved_sms(
-                phone=user_phone, user_name=user_name,
-                doctor_name=doctor_name, appointment_time=time_slot
-            )
-        elif update.status == "rejected":
-            sms_service.send_appointment_rejected_sms(
-                phone=user_phone, user_name=user_name,
-                doctor_name=doctor_name, appointment_time=time_slot,
-                rejection_reason=update.notes or "Time slot no longer available"
-            )
-        elif update.status == "completed":
-            sms_service.send_appointment_completed_sms(
-                phone=user_phone, user_name=user_name,
-                doctor_name=doctor_name, appointment_time=time_slot
-            )
-        print(f"📱 SMS queued for {user_phone}")
-    
-    # Return immediately (email/SMS sends in background)
-    return {
-        "message": f"Appointment status updated to {update.status}",
-        "appointment_id": appointment_id,
-        "status": update.status
-    }
 
 @router.get("/stats/{doctor_id}")
-async def get_doctor_stats(doctor_id: str, current_user: dict = Depends(require_role(["doctor"]))):
-    """Get doctor statistics (OPTIMIZED with aggregation)"""
-    
-    # ✅ OPTIMIZED: Use aggregation for counts
+async def get_doctor_stats(
+    doctor_id: str,
+    current_user: dict = Depends(require_role(["doctor"])),
+):
+    """Get appointment stats for the authenticated doctor."""
+    authenticated_doctor_id = str(current_user.get("user_id") or "")
+    if doctor_id != authenticated_doctor_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own statistics.",
+        )
+
     pipeline = [
-        {"$match": {"doctor_id": doctor_id}},
+        {"$match": {"doctor_id": authenticated_doctor_id}},
         {
             "$group": {
                 "_id": "$status",
-                "count": {"$sum": 1}
+                "count": {"$sum": 1},
             }
-        }
+        },
     ]
-    
+
     results = list(appointments_collection.aggregate(pipeline))
-    
-    # Convert to stats dict
     stats = {
         "total_appointments": 0,
         "pending": 0,
         "approved": 0,
         "completed": 0,
-        "rejected": 0
+        "rejected": 0,
     }
-    
+
     for result in results:
         status_name = result["_id"]
         count = result["count"]
         if status_name in stats:
             stats[status_name] = count
         stats["total_appointments"] += count
-    
+
     return stats

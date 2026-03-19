@@ -107,10 +107,17 @@ class AppointmentResponse(BaseModel):
     status: str
     notes: Optional[str]
     created_at: datetime
+    slot_start_at: Optional[datetime] = None
+    slot_end_at: Optional[datetime] = None
+    access_expires_at: Optional[datetime] = None
+    records_shared_with_doctor: bool = False
 
 class AppointmentUpdate(BaseModel):
     status: str
     notes: Optional[str] = None
+
+class AppointmentShareUpdate(BaseModel):
+    share_with_doctor: bool
 
 # ============================================
 # AUTH MODELS

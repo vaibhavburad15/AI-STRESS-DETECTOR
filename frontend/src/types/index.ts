@@ -71,11 +71,68 @@ export interface Appointment {
   doctor_id: string;
   doctor_name: string;
   time_slot: string;
+  slot_label?: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes?: string;
+  doctor_notes?: string;
   created_at: string;
+  updated_at?: string;
+  slot_start_at?: string;
+  slot_end_at?: string;
+  access_expires_at?: string;
+  records_shared_with_doctor?: boolean;
+  can_manage_record_sharing?: boolean;
+  data_access_active?: boolean;
+  data_access_message?: string;
+  access_deadline_label?: string;
   test_history?: Test[];
   latest_test?: Test;
+}
+
+export interface MedicalRecordSummary {
+  id: string;
+  record_name: string;
+  record_type: string;
+  file_name: string;
+  file_size: number;
+  file_format: string;
+  description?: string;
+  record_date?: string;
+  doctor_name?: string;
+  hospital_name?: string;
+  notes?: string;
+  tags: string[];
+  uploaded_at: string;
+  updated_at?: string;
+  download_count: number;
+  is_linked_to_stress_test: boolean;
+  linked_test_id?: string;
+}
+
+export interface DoctorSharedDetails {
+  appointment: {
+    id: string;
+    status: string;
+    time_slot: string;
+    slot_label?: string;
+    slot_start_at?: string;
+    slot_end_at?: string;
+    access_expires_at?: string;
+    data_access_message?: string;
+  };
+  patient: {
+    id: string;
+    name: string;
+    email: string;
+    age?: number;
+    gender?: string;
+    location?: string;
+    phone_number?: string;
+    has_previous_stress_issues?: boolean;
+    created_at?: string;
+  };
+  tests: Test[];
+  medical_records: MedicalRecordSummary[];
 }
 
 export interface AdminStats {
