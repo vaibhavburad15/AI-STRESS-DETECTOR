@@ -193,11 +193,9 @@ class StressReportGenerator:
             elements.append(Paragraph("Personalized Recommendations", heading_style))
             if isinstance(enhanced_snapshot, dict):
                 meta = enhanced_snapshot.get("meta") or {}
-                source_label = str(meta.get("source_label") or "").strip()
-                model = str(meta.get("model") or "").strip()
-                source_parts = [part for part in [source_label, f"Model: {model}" if model else ""] if part]
-                if source_parts:
-                    elements.append(Paragraph(" | ".join(source_parts), body_style))
+                primary_source = str(meta.get("primary_source") or "").strip()
+                source_label = "AI-powered recommendations" if primary_source == "llm" else "Rule-based recommendations"
+                elements.append(Paragraph(source_label, body_style))
             for i, rec in enumerate(recommendations, 1):
                 elements.append(Paragraph(f"{i}. {rec}", body_style))
             elements.append(Spacer(1, 8))

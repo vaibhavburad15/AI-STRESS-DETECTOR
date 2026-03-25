@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks, UploadFile, File
 from bson import ObjectId
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Dict, Optional, Any
 import json as _json
 import re as _re
+import uuid
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel
 from ..models import (
@@ -25,6 +27,7 @@ from ..appointment_access import (
 )
 from ..auth import require_role
 from ml_model.predictor import predictor
+from ml_model.audio_stress_predictor import audio_stress_predictor
 from ml_model.verbal_nn_scorer import verbal_nn_scorer
 from ml_model.multimodal_pipeline import multimodal_pipeline
 from ..recommendation_engine import enhanced_engine
@@ -43,8 +46,38 @@ router = APIRouter(prefix="/api/user", tags=["User"])
 tracker = ProgressTracker(progress_collection)
 logger = logging.getLogger(__name__)
 
+VOICE_UPLOAD_DIR = Path(__file__).resolve().parents[3] / "uploads" / "voice_temp"
+MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024
+ALLOWED_AUDIO_EXTENSIONS = {".wav", ".wave", ".mp3", ".ogg", ".m4a", ".mp4", ".webm", ".flac"}
+
 # Initialize analytics engine
 analytics = create_analytics_engine(tests_collection, users_collection, appointments_collection, doctors_collection)
+
+
+def _persist_uploaded_audio(audio_file: UploadFile) -> Path:
+    suffix = Path(audio_file.filename or "").suffix.lower()
+    if suffix not in ALLOWED_AUDIO_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Unsupported audio format. Upload one of: "
+                f"{', '.join(sorted(ALLOWED_AUDIO_EXTENSIONS))}"
+            ),
+        )
+
+    content = audio_file.file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded audio file is empty")
+    if len(content) > MAX_AUDIO_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Audio file is too large. Keep uploads under 25 MB.",
+        )
+
+    VOICE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    temp_path = VOICE_UPLOAD_DIR / f"voice_{uuid.uuid4().hex}{suffix}"
+    temp_path.write_bytes(content)
+    return temp_path
 
 # ============================================
 # USER PROFILE
@@ -569,6 +602,42 @@ async def submit_video_test(
         "multimodal": multimodal_meta,
         "timestamp": test_dict["timestamp"],
     }
+
+
+@router.post("/voice-stress/predict")
+async def predict_voice_stress(
+    audio_file: UploadFile = File(...),
+    current_user: dict = Depends(require_role(["user", "doctor", "admin"])),
+):
+    """Predict stress directly from an uploaded audio clip."""
+    if not audio_stress_predictor.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Voice stress model is not available. Train the audio model first.",
+        )
+
+    temp_audio_path = _persist_uploaded_audio(audio_file)
+    try:
+        prediction = audio_stress_predictor.predict_from_wav(temp_audio_path)
+        if prediction is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Voice stress prediction failed for the uploaded audio.",
+            )
+        return prediction
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Voice stress prediction failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Voice stress prediction failed: {str(exc)}",
+        ) from exc
+    finally:
+        try:
+            temp_audio_path.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("Failed to clean up temporary audio file: %s", temp_audio_path)
 
 
 # ============================================

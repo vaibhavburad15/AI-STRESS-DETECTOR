@@ -759,12 +759,11 @@ def _generate_stress_pdf(record: dict, stress_data: dict) -> "io.BytesIO":
                           textColor=colors.HexColor("#1e3a8a"), spaceAfter=6)),
         ]
         meta = stress_data.get("enhanced_recommendations", {}).get("meta", {}) if isinstance(stress_data.get("enhanced_recommendations"), dict) else {}
-        source_label = str(meta.get("source_label") or "").strip()
-        model_name = str(meta.get("model") or "").strip()
-        if source_label or model_name:
-            source_parts = [part for part in [source_label, f"Model: {model_name}" if model_name else ""] if part]
+        primary_source = str(meta.get("primary_source") or "").strip()
+        if primary_source:
+            source_label = "AI-powered recommendations" if primary_source == "llm" else "Rule-based recommendations"
             story.append(Paragraph(
-                " | ".join(source_parts),
+                source_label,
                 ps("rmeta", fontName="Helvetica-Oblique", fontSize=8,
                    leftIndent=10, spaceAfter=5, textColor=colors.HexColor("#64748b"))
             ))

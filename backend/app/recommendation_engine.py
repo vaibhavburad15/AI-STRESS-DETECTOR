@@ -180,7 +180,7 @@ class EnhancedRecommendationEngine:
             categories_from_llm.append(category)
 
         summary_source = "llm" if categories_from_llm else "rule_based"
-        summary_label = "LLM-personalized summary" if categories_from_llm else "Rule-based fallback"
+        summary_label = "AI-personalized summary" if categories_from_llm else "Rule-based fallback"
         recommendations["summary"] = self._merge_summary(
             recommendations.get("summary", {}),
             llm_summary=llm_payload.get("summary"),
@@ -195,7 +195,7 @@ class EnhancedRecommendationEngine:
             strategy="hybrid_llm" if categories_from_llm else "rule_based_fallback",
             primary_source="llm" if categories_from_llm else "rule_based",
             source_label=(
-                "Hybrid recommendations: LLM-personalized guidance with safety fallback"
+                "AI-powered recommendations"
                 if categories_from_llm
                 else "Rule-based fallback recommendations"
             ),
@@ -495,7 +495,7 @@ class EnhancedRecommendationEngine:
                     "schedule": str(item.get("schedule") or "").strip() or None,
                     "frequency": str(item.get("frequency") or "").strip() or None,
                     "source": "llm",
-                    "source_label": "LLM-personalized",
+                    "source_label": "AI-personalized",
                     "generated_by": "groq",
                     "model": model,
                     "generated_at": generated_at,
