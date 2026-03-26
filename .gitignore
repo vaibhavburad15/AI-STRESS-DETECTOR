@@ -1,32 +1,21 @@
-<<<<<<< HEAD
-# Python
-myenv/
-__pycache__/
-*.pyc
-
-# Node
-node_modules/
-
-# Build cachei8            
-.vite/
-
-# Environment files
-.env
-
-# VS Code
-.vscode/
-=======
-# OS / editor
+# ===============================
+# OS / Editor
+# ===============================
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 
+# ===============================
 # Python
+# ===============================
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.so
+
+# Testing / cache
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -35,10 +24,14 @@ __pycache__/
 htmlcov/
 .tox/
 .nox/
+
+# Packaging
 *.egg-info/
 pip-wheel-metadata/
 
-# Python virtual environments
+# ===============================
+# Virtual Environments
+# ===============================
 .venv/
 venv/
 env/
@@ -46,50 +39,62 @@ ENV/
 myenv/
 stress/
 
-# Environment variables and secrets
+# ===============================
+# Environment Variables / Secrets
+# ===============================
 .env
-.env.example
 .env.*
 **/.env
 **/.env.*
 !.env.example
 !**/.env.example
 
-# Node / frontend
+# ===============================
+# Node / Frontend
+# ===============================
 node_modules/
 frontend/dist/
 dist/
 build/
 *.tsbuildinfo
+
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# ✅ MEDIUM FIX: Exclude sensitive files and large generated artifacts
-# Medical documents and patient data
+# ===============================
+# Uploads / User Data
+# ===============================
 uploads/
 backend/uploads/
-backend/uploads/**/*
 
-# ML Model artifacts (trained models are large and generated)
+# ===============================
+# ML Models (trained files)
+# ===============================
 backend/ml_model/*.pkl
 backend/ml_model/*.h5
 backend/ml_model/*.joblib
-backend/ml_model/trained_model*
 
+# ===============================
+# Datasets (heavy files)
+# ===============================
+data/
+*.zip
+
+# ===============================
 # Database backups
+# ===============================
 *.dump
 *.bak
 *.backup
 
-# IDE and OS specific
-.DS_Store
+# ===============================
+# Misc
+# ===============================
 .project
 *.swp
 *.swo
 *~
-.idea/
-.vscode/
 .vim/
->>>>>>> 4f0a4d2479fedccc0dbadc6bcfe70d1ed2f7935e

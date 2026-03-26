@@ -439,6 +439,20 @@ export const appointmentService = {
   },
 };
 
+export const voiceStressService = {
+  async predict(audioFile: File): Promise<any> {
+    const formData = new FormData();
+    formData.append('audio_file', audioFile);
+
+    const { data } = await api.post('/api/user/voice-stress/predict', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return data;
+  },
+};
+
 // ============================================
 // ADVANCED ML / ANALYTICS SERVICES
 // ============================================

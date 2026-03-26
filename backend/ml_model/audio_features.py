@@ -107,6 +107,8 @@ def _trim_silence(signal: np.ndarray, sample_rate: int, top_db: float = 25.0) ->
     if signal.size < 512:
         return signal
 
+    # Mirror librosa-style energy trimming with a lightweight RMS pass so the
+    # backend stays responsive during first-run inference on Windows.
     frame_length = min(2048, max(512, int(0.08 * sample_rate)))
     hop_length = max(frame_length // 4, 1)
     frames = _frame_signal(signal, frame_length, hop_length)
@@ -129,6 +131,8 @@ def preprocess_audio(
     audio_source: str | Path,
     target_sample_rate: int = TARGET_SAMPLE_RATE,
 ) -> Tuple[np.ndarray, int]:
+    # Load, denoise, trim silence, and normalize so every clip reaches the
+    # model with a consistent amplitude scale and sampling rate.
     signal, sample_rate = _safe_load_audio(audio_source, target_sample_rate)
     signal = _reduce_noise(signal)
     signal = _trim_silence(signal, sample_rate, top_db=25)
@@ -349,6 +353,8 @@ def _compute_spectral_contrast_matrix(
 
 
 def extract_features(signal: np.ndarray, sample_rate: int) -> Dict[str, float]:
+    # Build a richer feature bundle per chunk, then summarize each group with
+    # mean and standard deviation so training and inference share one schema.
     signal = _pad_for_analysis(np.asarray(signal, dtype=np.float32), sample_rate)
 
     frame_length = max(1, int(sample_rate * FRAME_MS / 1000))
@@ -519,6 +525,21 @@ def split_audio_chunks(
     return chunks
 
 
+def split_audio(
+    signal: np.ndarray,
+    sample_rate: int,
+    chunk_duration_seconds: float = CHUNK_DURATION_SECONDS,
+    hop_duration_seconds: float | None = None,
+) -> list[tuple[float, float, np.ndarray]]:
+    """Compatibility wrapper used by the upgraded backend API."""
+    return split_audio_chunks(
+        signal=signal,
+        sample_rate=sample_rate,
+        chunk_duration_seconds=chunk_duration_seconds,
+        hop_duration_seconds=hop_duration_seconds,
+    )
+
+
 def predict_chunks(
     signal: np.ndarray,
     sample_rate: int,
@@ -530,7 +551,7 @@ def predict_chunks(
     chunk_duration_seconds: float = CHUNK_DURATION_SECONDS,
 ) -> list[Dict[str, Any]]:
     fill_values = fill_values or {}
-    chunk_windows = split_audio_chunks(
+    chunk_windows = split_audio(
         signal=signal,
         sample_rate=sample_rate,
         chunk_duration_seconds=chunk_duration_seconds,
@@ -607,20 +628,9 @@ def _weighted_average(values: Sequence[float], weights: Sequence[float]) -> floa
     return float(np.sum(values_array * weights_array) / weight_sum)
 
 
-def _human_join(items: Sequence[str]) -> str:
-    items = [item for item in items if item]
-    if not items:
-        return ""
-    if len(items) == 1:
-        return items[0]
-    if len(items) == 2:
-        return f"{items[0]} and {items[1]}"
-    return f"{', '.join(items[:-1])}, and {items[-1]}"
-
-
-def generate_explanation(chunk_predictions: Sequence[Dict[str, Any]]) -> str:
+def generate_explanation(chunk_predictions: Sequence[Dict[str, Any]]) -> list[str]:
     if not chunk_predictions:
-        return "No usable speech segments were detected."
+        return ["No usable speech segments were detected."]
 
     weights = [float(chunk["chunk_weight"]) for chunk in chunk_predictions]
     energy_score = _weighted_average(
@@ -641,16 +651,16 @@ def generate_explanation(chunk_predictions: Sequence[Dict[str, Any]]) -> str:
 
     signals: list[str] = []
     if energy_score >= 0.55:
-        signals.append("high energy voice")
+        signals.append("High energy voice detected")
     if mfcc_score >= 0.55:
-        signals.append("unstable vocal pattern")
+        signals.append("Unstable vocal pattern detected")
     if zcr_score >= 0.55:
-        signals.append("rapid fluctuations in speech")
+        signals.append("Rapid speech fluctuations detected")
 
     if not signals:
-        return "The voice pattern remained comparatively steady across the analyzed chunks."
+        return ["Voice pattern remained comparatively steady across the analyzed chunks."]
 
-    return f"Detected {_human_join(signals)}."
+    return signals
 
 
 def aggregate_predictions(

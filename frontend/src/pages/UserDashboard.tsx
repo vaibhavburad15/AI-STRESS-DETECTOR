@@ -84,6 +84,8 @@ const UserDashboard = () => {
   const [submitting, setSubmitting] = useState(false);
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [sharingAppointmentId, setSharingAppointmentId] = useState<string | null>(null);
+  const [openingHistoryTestId, setOpeningHistoryTestId] = useState<string | null>(null);
+  const [resultViewSource, setResultViewSource] = useState<'fresh' | 'history' | null>(null);
 
   // Chatbot state
   const [chatMessages, setChatMessages] = useState<Array<{type: 'user' | 'bot', content: string, stressLevel?: number, stressLabel?: string, confidence?: number}>>([]);
@@ -169,6 +171,7 @@ const UserDashboard = () => {
     if (tab === 'test') {
       setTestStarted(false);
       setTestResult(null);
+      setResultViewSource(null);
     }
   };
 
@@ -220,6 +223,7 @@ const UserDashboard = () => {
         responses: finalResponses,
       });
       setTestResult(data);
+      setResultViewSource('fresh');
       setTestStarted(false);
       loadTestHistory();
     } catch (error: any) {
@@ -326,6 +330,22 @@ const UserDashboard = () => {
       return new Date(appointment.access_expires_at).toLocaleString();
     }
     return 'Unknown';
+  };
+
+  const openHistoryTestResult = async (testId: string) => {
+    try {
+      setOpeningHistoryTestId(testId);
+      const { data } = await api.get(`/api/user/test/${testId}`);
+      setTestResult(data);
+      setResultViewSource('history');
+      setTestStarted(false);
+      setActiveTab('test');
+    } catch (error) {
+      console.error('Failed to load test details', error);
+      alert('Failed to open this assessment result. Please try again.');
+    } finally {
+      setOpeningHistoryTestId(null);
+    }
   };
 
   const handleToggleDoctorShare = async (appointmentId: string, shareWithDoctor: boolean) => {
@@ -648,7 +668,9 @@ const UserDashboard = () => {
                   <ShieldCheck className="h-7 w-7 text-emerald-600" />
                 </div>
                 <h2 className="text-3xl font-semibold text-slate-900">Assessment Complete</h2>
-                <p className="mt-1 text-slate-600">Here is your latest result.</p>
+                <p className="mt-1 text-slate-600">
+                  {resultViewSource === 'history' ? 'Viewing a saved assessment result.' : 'Here is your latest result.'}
+                </p>
               </div>
               <div className="mb-5 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50 p-6 text-center">
                 <p className="text-sm text-slate-600">Your Stress Level</p>
@@ -688,16 +710,31 @@ const UserDashboard = () => {
                 />
               </div>
               <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTestResult(null);
-                    setTestStarted(false);
-                  }}
-                  className="rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white"
-                >
-                  Take Another Test
-                </button>
+                {resultViewSource === 'history' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('history');
+                      setTestResult(null);
+                      setResultViewSource(null);
+                    }}
+                    className="rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white"
+                  >
+                    Back to History
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTestResult(null);
+                      setTestStarted(false);
+                      setResultViewSource(null);
+                    }}
+                    className="rounded-xl bg-blue-600 px-5 py-2.5 font-semibold text-white"
+                  >
+                    Take Another Test
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => selectTab('appointments')}
@@ -799,18 +836,26 @@ const UserDashboard = () => {
               ) : (
                 <div className="space-y-4">
                   {sortedHistory.map((test) => (
-                    <div key={test.id} className="rounded-xl border border-blue-100 bg-white p-5">
+                    <button
+                      key={test.id}
+                      type="button"
+                      onClick={() => openHistoryTestResult(test.id)}
+                      className="w-full rounded-xl border border-blue-100 bg-white p-5 text-left transition hover:border-blue-300 hover:shadow-sm"
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <p className={`text-2xl font-semibold ${getStressColor(test.stress_level)}`}>{test.stress_label} Stress Level</p>
                           <p className="text-sm text-slate-600">{new Date(test.timestamp).toLocaleString()}</p>
+                          <p className="mt-2 text-sm font-medium text-blue-600">
+                            {openingHistoryTestId === test.id ? 'Opening result...' : 'Click to view full result'}
+                          </p>
                         </div>
                         <div className="rounded-lg bg-blue-50 px-4 py-2">
                           <p className="text-xs text-slate-500">Confidence</p>
                           <p className="text-lg font-semibold text-blue-700">{(test.confidence_score * 100).toFixed(1)}%</p>
                         </div>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -973,6 +1018,7 @@ const UserDashboard = () => {
           onComplete={(result) => {
             setShowVideoModal(false);
             setTestResult(result);
+            setResultViewSource('fresh');
             loadTestHistory();
           }}
           onClose={() => setShowVideoModal(false)}

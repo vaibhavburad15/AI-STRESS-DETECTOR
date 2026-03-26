@@ -7,6 +7,13 @@ interface RecommendationCardProps {
   onComplete: (id: string, rating?: number, notes?: string) => void;
 }
 
+const getRecommendationSourceLabel = (recommendation: any): string => {
+  if (recommendation?.source === 'llm') {
+    return 'AI-personalized';
+  }
+  return 'Rule-based fallback';
+};
+
 export const RecommendationCard: React.FC<RecommendationCardProps> = ({
   recommendation,
   onStart,
@@ -30,11 +37,8 @@ export const RecommendationCard: React.FC<RecommendationCardProps> = ({
       <div className="card-content">
         <div className="card-badges">
           <span className={`recommendation-source source-${recommendation.source || 'rule_based'}`}>
-            {recommendation.source_label || 'Rule-based fallback'}
+            {getRecommendationSourceLabel(recommendation)}
           </span>
-          {recommendation.model && (
-            <span className="recommendation-model">{recommendation.model}</span>
-          )}
         </div>
 
         <h3 className="card-title">{recommendation.title}</h3>

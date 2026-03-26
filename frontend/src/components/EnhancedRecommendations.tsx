@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { RecommendationCard } from './RecommendationCard';
-import { ProgressTracker } from './ProgressTracker';
 import api from '../services/api';
 
 interface EnhancedRecommendationsProps {
@@ -8,18 +7,22 @@ interface EnhancedRecommendationsProps {
   userId: string;
 }
 
+const getSummarySourceLabel = (recommendations: any): string => {
+  const primarySource = recommendations?.meta?.primary_source || recommendations?.summary?.source;
+  if (primarySource === 'llm') {
+    return 'AI-powered recommendations';
+  }
+  return 'Rule-based recommendations';
+};
+
 export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = ({ testId, userId }) => {
   const [recommendations, setRecommendations] = useState<any>(null);
-  const [achievements, setAchievements] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState('immediate');
 
   useEffect(() => {
     loadRecommendations();
-    if (userId) {
-      loadAchievements();
-    }
-  }, [testId, userId]);
+  }, [testId]);
 
   const loadRecommendations = async () => {
     try {
@@ -34,27 +37,13 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
     }
   };
 
-  const loadAchievements = async () => {
-    if (!userId) {
-      return;
-    }
-
-    try {
-      const { data } = await api.get(`/api/user/achievements/${userId}`);
-      setAchievements(data);
-    } catch (error) {
-      console.error('Failed to load achievements', error);
-    }
-  };
-
   const handleStart = async (recommendationId: string) => {
     try {
       await api.post('/api/user/recommendations/start', {
         user_id: userId,
         recommendation_id: recommendationId
       });
-      alert('Recommendation started! +5 points');
-      loadAchievements();
+      alert('Recommendation started!');
     } catch (error) {
       console.error('Failed to start recommendation', error);
     }
@@ -62,19 +51,13 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
 
   const handleComplete = async (recommendationId: string, rating?: number, notes?: string) => {
     try {
-      const { data } = await api.post('/api/user/recommendations/complete', {
+      await api.post('/api/user/recommendations/complete', {
         user_id: userId,
         recommendation_id: recommendationId,
         effectiveness_rating: rating,
         notes
       });
-
-      alert(`Completed! +${data.points_earned} points!`);
-      if (data.new_badges.length > 0) {
-        alert(`New badge earned: ${data.new_badges.join(', ')}`);
-      }
-
-      loadAchievements();
+      alert('Recommendation marked as completed.');
     } catch (error) {
       console.error('Failed to complete recommendation', error);
     }
@@ -107,16 +90,11 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
 
   return (
     <div className="enhanced-recommendations-container">
-      {achievements && <ProgressTracker achievements={achievements} />}
-
       <div className={`summary-banner priority-${recommendations.summary.priority}`}>
         <div className="summary-source-row">
           <span className={`source-pill source-${recommendations.meta?.primary_source || recommendations.summary.source || 'rule_based'}`}>
-            {recommendations.meta?.source_label || recommendations.summary.source_label || 'Rule-based recommendations'}
+            {getSummarySourceLabel(recommendations)}
           </span>
-          {recommendations.meta?.model && (
-            <span className="model-pill">Model: {recommendations.meta.model}</span>
-          )}
         </div>
 
         <h2 className="text-2xl font-bold">{recommendations.summary.title}</h2>
@@ -156,24 +134,6 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
           />
         ))}
       </div>
-
-      {recommendations.quick_wins && recommendations.quick_wins.length > 0 && (
-        <div className="quick-wins">
-          <h3>Quick Wins (30-60 seconds)</h3>
-          <div className="quick-wins-list">
-            {recommendations.quick_wins.map((qw: any) => (
-              <div key={qw.id} className="quick-win-card">
-                <span className="icon">{qw.icon}</span>
-                <div>
-                  <strong>{qw.title}</strong>
-                  <p>{qw.description}</p>
-                  <span className="duration">{qw.duration}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

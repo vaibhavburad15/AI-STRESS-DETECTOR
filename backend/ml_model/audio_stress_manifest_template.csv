@@ -1,5 +1,0 @@
-sample_id,audio_path,stress_label,stress_level,speaker_id,split,language,assignment_id,recording_device,environment,transcript,notes
-sample_0001,low/speaker_01/clip_01.wav,low,0,speaker_01,train,en,assignment_01,phone,quiet,"I feel calm and in control today.","Replace this row with a real labeled sample."
-sample_0002,moderate/speaker_02/clip_03.wav,moderate,1,speaker_02,train,en,assignment_02,laptop,office,"I am a little stressed but managing.","Replace this row with a real labeled sample."
-sample_0003,high/speaker_03/clip_02.wav,high,2,speaker_03,test,en,assignment_03,phone,noisy,"I feel overwhelmed with my workload.","Replace this row with a real labeled sample."
-sample_0004,severe/speaker_04/clip_05.wav,severe,3,speaker_04,test,en,assignment_04,webcam,quiet,"I cannot cope and feel stressed all the time.","Replace this row with a real labeled sample."
