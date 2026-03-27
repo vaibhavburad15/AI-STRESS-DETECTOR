@@ -8,25 +8,13 @@ from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
 import pandas as pd
 from .stress_forecaster import stress_forecaster
-
-# Question labels for SHAP explanations
-QUESTION_LABELS = {
-    "q1": "Nervous/Anxious", "q2": "Sad/Depressed", "q3": "Irritable/Angry",
-    "q4": "Headaches/Body pain", "q5": "Physical fatigue", "q6": "Sleep trouble",
-    "q7": "Rapid heartbeat", "q8": "Difficulty concentrating", "q9": "Negative thoughts",
-    "q10": "Worry about future", "q11": "Difficulty with decisions",
-    "q12": "Appetite changes", "q13": "Avoiding social", "q14": "Overwhelmed by tasks",
-    "q15": "Work-life balance", "q16": "Work/study stress",
-    "q17": "Relationship stress", "q18": "Financial stress",
-}
-
-QUESTION_CATEGORIES = {
-    "emotional": ["q1", "q2", "q3"],
-    "physical": ["q4", "q5", "q6", "q7"],
-    "cognitive": ["q8", "q9", "q10", "q11"],
-    "behavioral": ["q12", "q13", "q14"],
-    "stressors": ["q15", "q16", "q17", "q18"],
-}
+from .questionnaire_config import (
+    EXPECTED_FEATURE_COLUMNS,
+    QUESTION_CATEGORIES,
+    QUESTION_LABELS,
+    QUESTION_WEIGHTS,
+    apply_question_weights,
+)
 
 
 class StressPredictor:
@@ -116,6 +104,71 @@ class StressPredictor:
         self.model = train_stress_model()
         self._load_shap_model()
 
+    @staticmethod
+    def _build_feature_frame(responses: List[int]) -> pd.DataFrame:
+        return pd.DataFrame([responses], columns=EXPECTED_FEATURE_COLUMNS)
+
+    def _stress_level_from_average(self, average_score: float) -> Tuple[int, str]:
+        if average_score < 2:
+            level = 0
+        elif average_score < 3:
+            level = 1
+        elif average_score < 4:
+            level = 2
+        else:
+            level = 3
+        return level, self.stress_labels[level]
+
+    def _compute_weighted_assessment(self, responses: List[int]) -> Dict[str, Any]:
+        question_keys = EXPECTED_FEATURE_COLUMNS
+        weight_values = np.array([QUESTION_WEIGHTS[q] for q in question_keys], dtype=float)
+        response_values = np.array(responses, dtype=float)
+
+        weighted_average = float(np.average(response_values, weights=weight_values))
+        weighted_score = float(((weighted_average - 1.0) / 4.0) * 100.0)
+        weighted_level, weighted_label = self._stress_level_from_average(weighted_average)
+
+        normalized_stress = np.clip((response_values - 1.0) / 4.0, 0.0, 1.0)
+        contribution_values = weight_values * normalized_stress
+        total_contribution = float(np.sum(contribution_values))
+
+        top_weighted_questions = []
+        for index, question_key in enumerate(question_keys):
+            contribution = float(contribution_values[index])
+            contribution_percent = (
+                (contribution / total_contribution) * 100.0
+                if total_contribution > 0
+                else 0.0
+            )
+            top_weighted_questions.append(
+                {
+                    "question": question_key,
+                    "label": QUESTION_LABELS.get(question_key, question_key),
+                    "response_value": int(response_values[index]),
+                    "weight": round(float(weight_values[index]), 3),
+                    "weighted_response": round(float(response_values[index] * weight_values[index]), 3),
+                    "stress_contribution": round(contribution, 4),
+                    "contribution_percent": round(contribution_percent, 2),
+                }
+            )
+
+        top_weighted_questions.sort(
+            key=lambda item: (item["stress_contribution"], item["weight"], item["response_value"]),
+            reverse=True,
+        )
+
+        return {
+            "average": round(weighted_average, 2),
+            "score": round(weighted_score, 1),
+            "stress_level": weighted_level,
+            "stress_label": weighted_label,
+            "question_weights": {
+                question: round(float(weight), 3)
+                for question, weight in QUESTION_WEIGHTS.items()
+            },
+            "top_weighted_questions": top_weighted_questions[:6],
+        }
+
     def predict(self, responses: List[int]) -> Tuple[int, str, float, List[str]]:
         """
         Predict stress level from questionnaire responses.
@@ -132,10 +185,11 @@ class StressPredictor:
         if not all(1 <= r <= 5 for r in responses):
             raise ValueError("All responses must be between 1 and 5")
 
-        X = pd.DataFrame([responses], columns=[f"q{i+1}" for i in range(18)])
+        X_raw = self._build_feature_frame(responses)
+        X_model = apply_question_weights(X_raw)
 
-        prediction = int(model.predict(X)[0])
-        probabilities = model.predict_proba(X)[0]
+        prediction = int(model.predict(X_model)[0])
+        probabilities = model.predict_proba(X_model)[0]
         confidence = float(probabilities[prediction])
 
         stress_label = self.stress_labels[prediction]
@@ -153,8 +207,9 @@ class StressPredictor:
         if model is None:
             raise Exception("Model not loaded. Please train the model first.")
 
-        X = pd.DataFrame([responses], columns=[f"q{i+1}" for i in range(18)])
-        probabilities = model.predict_proba(X)[0]
+        X_raw = self._build_feature_frame(responses)
+        X_model = apply_question_weights(X_raw)
+        probabilities = model.predict_proba(X_model)[0]
 
         # --- Continuous stress score (0-100) ---
         # Weighted sum of class probabilities: Low=0, Moderate=33, High=66, Severe=100
@@ -162,10 +217,13 @@ class StressPredictor:
         continuous_score = float(np.dot(probabilities, weights))
 
         # --- SHAP explainability ---
-        shap_explanation = self._compute_shap(X, prediction)
+        shap_explanation = self._compute_shap(X_model, X_raw, prediction)
 
         # --- Category-level analysis ---
         category_scores = self._compute_category_scores(responses)
+
+        # --- Weighted questionnaire analysis ---
+        weighted_assessment = self._compute_weighted_assessment(responses)
 
         # --- Risk factors ---
         risk_factors = self._identify_risk_factors(responses, shap_explanation)
@@ -181,25 +239,31 @@ class StressPredictor:
             "recommendations": recommendations,
             "explanation": shap_explanation,
             "category_scores": category_scores,
+            "weighted_assessment": weighted_assessment,
             "risk_factors": risk_factors,
         }
 
-    def _compute_shap(self, X: pd.DataFrame, predicted_class: int) -> Dict[str, Any]:
+    def _compute_shap(
+        self,
+        X_model: pd.DataFrame,
+        X_raw: pd.DataFrame,
+        predicted_class: int,
+    ) -> Dict[str, Any]:
         """Compute SHAP values for a single prediction."""
         try:
             shap_module = importlib.import_module("shap")
         except Exception:
-            return self._fallback_importance(X)
+            return self._fallback_importance(X_raw)
 
         tree_model = self.shap_model if self.shap_model is not None else None
         if tree_model is None:
-            return self._fallback_importance(X)
+            return self._fallback_importance(X_raw)
 
         try:
             if self.shap_explainer is None:
                 self.shap_explainer = shap_module.TreeExplainer(tree_model)
 
-            shap_values = self.shap_explainer.shap_values(X)
+            shap_values = self.shap_explainer.shap_values(X_model)
 
             # shap_values shape: (n_classes, n_samples, n_features) or list
             if isinstance(shap_values, list):
@@ -207,7 +271,7 @@ class StressPredictor:
             else:
                 class_shap = shap_values[0] if shap_values.ndim == 2 else shap_values[predicted_class][0]
 
-            feature_names = [f"q{i+1}" for i in range(18)]
+            feature_names = EXPECTED_FEATURE_COLUMNS
             sorted_idx = np.argsort(np.abs(class_shap))[::-1]
 
             top_factors = []
@@ -217,7 +281,7 @@ class StressPredictor:
                     "question": fname,
                     "label": QUESTION_LABELS.get(fname, fname),
                     "shap_value": round(float(class_shap[idx]), 4),
-                    "response_value": int(X.iloc[0][fname]),
+                    "response_value": int(X_raw.iloc[0][fname]),
                     "impact": "increases_stress" if class_shap[idx] > 0 else "decreases_stress",
                 })
 
@@ -230,7 +294,7 @@ class StressPredictor:
             }
         except Exception as exc:
             print(f"SHAP computation failed: {exc}")
-            return self._fallback_importance(X)
+            return self._fallback_importance(X_raw)
 
     def _fallback_importance(self, X: pd.DataFrame) -> Dict[str, Any]:
         """Use model-level feature importance when SHAP is unavailable."""
@@ -239,7 +303,7 @@ class StressPredictor:
             return {"method": "none", "top_factors": [], "all_shap_values": {}}
 
         importances = tree_model.feature_importances_
-        feature_names = [f"q{i+1}" for i in range(18)]
+        feature_names = EXPECTED_FEATURE_COLUMNS
         sorted_idx = np.argsort(importances)[::-1]
 
         top_factors = []

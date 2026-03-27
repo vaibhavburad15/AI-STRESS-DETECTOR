@@ -19,6 +19,26 @@ export interface Question {
   id: number;
   question: string;
   category: string;
+  weight?: number;
+}
+
+export interface WeightedQuestionFactor {
+  question: string;
+  label: string;
+  response_value: number;
+  weight: number;
+  weighted_response: number;
+  stress_contribution: number;
+  contribution_percent: number;
+}
+
+export interface WeightedAssessment {
+  average: number;
+  score: number;
+  stress_level: number;
+  stress_label: string;
+  question_weights: Record<string, number>;
+  top_weighted_questions: WeightedQuestionFactor[];
 }
 
 export interface Test {
@@ -28,7 +48,15 @@ export interface Test {
   stress_level: number;
   stress_label: string;
   confidence_score: number;
+  continuous_score?: number;
+  probabilities?: Record<string, number>;
   recommendations: string[];
+  explanation?: StressExplanation;
+  category_scores?: Record<string, CategoryScore>;
+  weighted_assessment?: WeightedAssessment;
+  risk_factors?: RiskFactor[];
+  trend?: StressTrend;
+  crisis?: CrisisData;
   timestamp: string;
 }
 
@@ -226,13 +254,7 @@ export interface CrisisData {
 }
 
 export interface EnhancedTest extends Test {
-  continuous_score?: number;
-  probabilities?: Record<string, number>;
-  explanation?: StressExplanation;
-  category_scores?: Record<string, CategoryScore>;
-  risk_factors?: RiskFactor[];
-  trend?: StressTrend;
-  crisis?: CrisisData;
+  weighted_assessment?: WeightedAssessment;
 }
 
 export interface UserAnalytics {

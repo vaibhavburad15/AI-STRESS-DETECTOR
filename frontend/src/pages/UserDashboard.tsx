@@ -702,6 +702,7 @@ const UserDashboard = () => {
                   testData={{
                     explanation: testResult.explanation,
                     category_scores: testResult.category_scores,
+                    weighted_assessment: testResult.weighted_assessment,
                     risk_factors: testResult.risk_factors,
                     continuous_score: testResult.continuous_score,
                     probabilities: testResult.probabilities,

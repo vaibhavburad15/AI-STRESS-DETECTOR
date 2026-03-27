@@ -27,6 +27,7 @@ from ..appointment_access import (
 )
 from ..auth import require_role
 from ml_model.predictor import predictor
+from ml_model.questionnaire_config import QUESTION_WEIGHTS
 from ml_model.audio_stress_predictor import audio_stress_predictor
 from ml_model.verbal_nn_scorer import verbal_nn_scorer
 from ml_model.multimodal_pipeline import multimodal_pipeline
@@ -352,6 +353,10 @@ QUESTIONNAIRE = [
     {"id": 18, "question": "How much stress do you experience from financial concerns?", "category": "stressors"}
 ]
 
+for question in QUESTIONNAIRE:
+    question_key = f"q{question['id']}"
+    question["weight"] = round(float(QUESTION_WEIGHTS.get(question_key, 1.0)), 3)
+
 @router.get("/questionnaire")
 async def get_questionnaire():
     """Get the CBT-based stress assessment questionnaire"""
@@ -539,6 +544,7 @@ async def submit_video_test(
         "recommendations": result["recommendations"],
         "explanation": result["explanation"],
         "category_scores": result["category_scores"],
+        "weighted_assessment": result["weighted_assessment"],
         "risk_factors": result["risk_factors"],
         "probabilities": result["probabilities"],
         "trend": trend_data,
@@ -596,6 +602,7 @@ async def submit_video_test(
         "recommendations": result["recommendations"],
         "explanation": result["explanation"],
         "category_scores": result["category_scores"],
+        "weighted_assessment": result["weighted_assessment"],
         "risk_factors": result["risk_factors"],
         "trend": trend_data,
         "crisis": crisis_data,
@@ -681,6 +688,7 @@ async def submit_test(
         "recommendations": result["recommendations"],
         "explanation": result["explanation"],
         "category_scores": result["category_scores"],
+        "weighted_assessment": result["weighted_assessment"],
         "risk_factors": result["risk_factors"],
         "probabilities": result["probabilities"],
         "trend": trend_data,
@@ -742,6 +750,7 @@ async def submit_test(
         "recommendations": result["recommendations"],
         "explanation": result["explanation"],
         "category_scores": result["category_scores"],
+        "weighted_assessment": result["weighted_assessment"],
         "risk_factors": result["risk_factors"],
         "trend": trend_data,
         "crisis": crisis_data,
@@ -1573,12 +1582,14 @@ async def get_test_explanation(test_id: str, current_user: dict = Depends(requir
     if current_user["role"] == "doctor":
         require_doctor_user_access(current_user, test["user_id"])
 
-    # Return stored explanation if present, otherwise recompute
-    if test.get("explanation"):
+    # Return stored analytics when both explanation and weighted analysis exist.
+    # Older saved tests can have explanation data without the newer weighted fields.
+    if test.get("explanation") and test.get("weighted_assessment"):
         return {
             "test_id": test_id,
             "explanation": test["explanation"],
             "category_scores": test.get("category_scores", {}),
+            "weighted_assessment": test.get("weighted_assessment"),
             "risk_factors": test.get("risk_factors", []),
             "continuous_score": test.get("continuous_score"),
             "probabilities": test.get("probabilities", {}),
@@ -1592,6 +1603,7 @@ async def get_test_explanation(test_id: str, current_user: dict = Depends(requir
             {"$set": {
                 "explanation": result["explanation"],
                 "category_scores": result["category_scores"],
+                "weighted_assessment": result["weighted_assessment"],
                 "risk_factors": result["risk_factors"],
                 "continuous_score": result["continuous_score"],
                 "probabilities": result["probabilities"],
@@ -1601,6 +1613,7 @@ async def get_test_explanation(test_id: str, current_user: dict = Depends(requir
             "test_id": test_id,
             "explanation": result["explanation"],
             "category_scores": result["category_scores"],
+            "weighted_assessment": result["weighted_assessment"],
             "risk_factors": result["risk_factors"],
             "continuous_score": result["continuous_score"],
             "probabilities": result["probabilities"],

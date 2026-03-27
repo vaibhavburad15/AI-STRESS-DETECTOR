@@ -80,8 +80,10 @@ backend/ml_model/*.joblib
 # ===============================
 # Datasets (heavy files)
 # ===============================
-data/
-*.zip
+data/public/crema-d/
+data/public/emodb/
+data/public/ravdess_16k/
+data/public/tess/
 
 # ===============================
 # Database backups

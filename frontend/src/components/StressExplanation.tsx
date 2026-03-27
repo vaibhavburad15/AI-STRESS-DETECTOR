@@ -1,13 +1,20 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Brain, Download, Info } from 'lucide-react';
 import { explainabilityService } from '../services/api';
-import type { StressExplanation as ExplanationType, CategoryScore, RiskFactor, CrisisData } from '../types';
+import type {
+  StressExplanation as ExplanationType,
+  CategoryScore,
+  RiskFactor,
+  CrisisData,
+  WeightedAssessment,
+} from '../types';
 
 interface Props {
   testId: string;
   testData?: {
     explanation?: ExplanationType;
     category_scores?: Record<string, CategoryScore>;
+    weighted_assessment?: WeightedAssessment;
     risk_factors?: RiskFactor[];
     continuous_score?: number;
     probabilities?: Record<string, number>;
@@ -34,6 +41,7 @@ const severityColor = (severity: string) => {
 const StressExplanation = ({ testId, testData }: Props) => {
   const [explanation, setExplanation] = useState<ExplanationType | null>(testData?.explanation || null);
   const [categoryScores, setCategoryScores] = useState<Record<string, CategoryScore>>(testData?.category_scores || {});
+  const [weightedAssessment, setWeightedAssessment] = useState<WeightedAssessment | undefined>(testData?.weighted_assessment);
   const [riskFactors, setRiskFactors] = useState<RiskFactor[]>(testData?.risk_factors || []);
   const [continuousScore, setContinuousScore] = useState<number | undefined>(testData?.continuous_score);
   const [probabilities, setProbabilities] = useState<Record<string, number>>(testData?.probabilities || {});
@@ -52,6 +60,7 @@ const StressExplanation = ({ testId, testData }: Props) => {
       const data = await explainabilityService.getTestExplanation(testId);
       setExplanation(data.explanation);
       setCategoryScores(data.category_scores || {});
+      setWeightedAssessment(data.weighted_assessment || undefined);
       setRiskFactors(data.risk_factors || []);
       setContinuousScore(data.continuous_score);
       setProbabilities(data.probabilities || {});
@@ -135,6 +144,29 @@ const StressExplanation = ({ testId, testData }: Props) => {
         </div>
       )}
 
+      {weightedAssessment?.stress_label ? (
+        <div className="rounded-xl bg-white p-5 shadow-sm">
+          <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Weighted Questionnaire Score</h4>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className={`text-3xl font-bold ${severityColor(weightedAssessment.stress_label).split(' ')[0]}`}>
+                {weightedAssessment.stress_label}
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                Weighted average {weightedAssessment.average.toFixed(2)}/5
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-slate-500">Weighted score</p>
+              <p className="text-3xl font-bold text-indigo-700">{weightedAssessment.score.toFixed(0)}</p>
+            </div>
+          </div>
+          <p className="mt-3 text-sm text-slate-600">
+            This score uses question-wise importance, so higher-priority questions contribute more to the final questionnaire score.
+          </p>
+        </div>
+      ) : null}
+
       {explanation && explanation.top_factors && explanation.top_factors.length > 0 && (
         <div className="rounded-xl bg-white p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
@@ -182,6 +214,33 @@ const StressExplanation = ({ testId, testData }: Props) => {
           </div>
         </div>
       )}
+
+      {weightedAssessment?.top_weighted_questions?.length ? (
+        <div className="rounded-xl bg-white p-5 shadow-sm">
+          <h4 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Highest Weighted Question Impacts</h4>
+          <div className="space-y-3">
+            {weightedAssessment.top_weighted_questions.map((factor, index) => (
+              <div key={`${factor.question}-${index}`}>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="font-medium text-slate-700">{factor.label}</span>
+                  <span className="text-right text-slate-500">
+                    Response {factor.response_value}/5, weight {factor.weight.toFixed(2)}
+                  </span>
+                </div>
+                <div className="mt-1 h-2 rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-indigo-500"
+                    style={{ width: `${Math.min(factor.contribution_percent, 100)}%` }}
+                  />
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Contribution to weighted score: {factor.contribution_percent.toFixed(1)}%
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {riskFactors.length > 0 && (
         <div className="rounded-xl bg-white p-5 shadow-sm">

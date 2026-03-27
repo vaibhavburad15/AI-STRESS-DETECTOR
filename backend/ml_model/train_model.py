@@ -10,8 +10,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.calibration import CalibratedClassifierCV
+from .questionnaire_config import (
+    EXPECTED_FEATURE_COLUMNS,
+    QUESTION_WEIGHTS,
+    apply_question_weights,
+)
 
-EXPECTED_FEATURE_COLUMNS = [f"q{i+1}" for i in range(18)]
 TARGET_COLUMN = "stress_level"
 
 
@@ -83,10 +87,11 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
     df = load_training_data(dataset_path=dataset_path, fallback_samples=1000)
 
     X = df.drop(TARGET_COLUMN, axis=1)
+    X_weighted = apply_question_weights(X)
     y = df[TARGET_COLUMN]
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+        X_weighted, y, test_size=0.2, random_state=42, stratify=y
     )
 
     print(f"Training rows: {len(X_train)}, Test rows: {len(X_test)}")
@@ -99,7 +104,7 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
         n_estimators=150, max_depth=6, learning_rate=0.1, random_state=42,
     )
     lr = LogisticRegression(
-        max_iter=1000, random_state=42, class_weight="balanced", multi_class="multinomial",
+        max_iter=1000, random_state=42, class_weight="balanced",
     )
 
     # --- Ensemble via soft voting ---
@@ -120,7 +125,7 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
     accuracy = accuracy_score(y_test, y_pred)
 
     # Cross-validation on the base ensemble
-    cv_scores = cross_val_score(ensemble, X, y, cv=5, scoring="accuracy")
+    cv_scores = cross_val_score(ensemble, X_weighted, y, cv=5, scoring="accuracy")
 
     print("\nModel training complete.")
     print(f"Test Accuracy: {accuracy:.4f}")
@@ -165,7 +170,11 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
         "features": EXPECTED_FEATURE_COLUMNS,
         "target": TARGET_COLUMN,
         "model_type": "CalibratedEnsemble(RF+GBM+LR)",
+        "input_preprocessing": "question_weighted",
         "ensemble_weights": [2, 2, 1],
+        "question_weights": {
+            feature: float(QUESTION_WEIGHTS[feature]) for feature in EXPECTED_FEATURE_COLUMNS
+        },
         "rf_n_estimators": 150,
         "gbm_n_estimators": 150,
         "random_state": 42,
