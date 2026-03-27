@@ -15,18 +15,11 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from app.database import init_admin, close_mongo_connection
-from app.routes import auth_routes, user_routes, doctor_routes, admin_routes
+from app.routes import account_routes, admin_routes, care_routes, user_dashboard_routes
 
 logger = logging.getLogger(__name__)
 
-# Try to import medical records routes
-MEDICAL_RECORDS_ENABLED = False
-try:
-    from app.routes import medical_records_routes
-    if hasattr(medical_records_routes, "router"):
-        MEDICAL_RECORDS_ENABLED = True
-except (ImportError, AttributeError) as e:
-    logger.warning("Medical records routes disabled: %s", e)
+MEDICAL_RECORDS_ENABLED = True
 
 
 def _get_allowed_origins() -> list[str]:
@@ -68,15 +61,11 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(auth_routes.router)
-app.include_router(user_routes.router)
-app.include_router(doctor_routes.router)
+app.include_router(account_routes.router)
+app.include_router(user_dashboard_routes.router)
+app.include_router(care_routes.router)
 app.include_router(admin_routes.router)
 
-# Include medical records router if available (NEW)
-if MEDICAL_RECORDS_ENABLED:
-    app.include_router(medical_records_routes.router)  # type: ignore
-    print("✅ Medical Records routes enabled")
 
 @app.on_event("startup")
 async def startup_event():
