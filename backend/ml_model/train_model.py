@@ -2,14 +2,23 @@ import json
 import os
 import pickle
 import hashlib
+import sys
+import warnings
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+import sklearn
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from sklearn.calibration import CalibratedClassifierCV
+from .model_artifacts import (
+    ensure_runtime_model_dir,
+    stress_meta_path,
+    stress_model_path,
+    stress_shap_model_path,
+)
 from .questionnaire_config import (
     EXPECTED_FEATURE_COLUMNS,
     QUESTION_WEIGHTS,
@@ -17,6 +26,27 @@ from .questionnaire_config import (
 )
 
 TARGET_COLUMN = "stress_level"
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return float(value)
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return int(value)
 
 
 def _sha256_file(path: str) -> str:
@@ -80,11 +110,21 @@ def load_training_data(dataset_path=None, fallback_samples=1000):
     return generate_training_data(n_samples=fallback_samples)
 
 
+def _build_calibrator(base_estimator, method: str) -> CalibratedClassifierCV:
+    return CalibratedClassifierCV(estimator=base_estimator, method=method, cv="prefit")
+
+
 def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
     """Train an ensemble model (RF + GBM + LR stacking) for stress detection."""
     model_dir = os.path.dirname(__file__)
+    runtime_model_dir = ensure_runtime_model_dir()
     dataset_path = os.path.join(model_dir, dataset_filename) if dataset_filename else None
     df = load_training_data(dataset_path=dataset_path, fallback_samples=1000)
+    run_full_cv = _env_flag("STRESS_MODEL_RUN_FULL_CV", default=False)
+    enable_calibration = _env_flag("STRESS_MODEL_ENABLE_CALIBRATION", default=True)
+    calibration_method = os.getenv("STRESS_MODEL_CALIBRATION_METHOD", "sigmoid").strip() or "sigmoid"
+    calibration_size = float(np.clip(_env_float("STRESS_MODEL_CALIBRATION_SIZE", 0.15), 0.05, 0.4))
+    rf_n_jobs = max(1, _env_int("STRESS_MODEL_RF_N_JOBS", 1))
 
     X = df.drop(TARGET_COLUMN, axis=1)
     X_weighted = apply_question_weights(X)
@@ -96,40 +136,76 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
 
     print(f"Training rows: {len(X_train)}, Test rows: {len(X_test)}")
 
-    # --- Individual models ---
     rf = RandomForestClassifier(
-        n_estimators=150, max_depth=12, random_state=42, class_weight="balanced",
+        n_estimators=150,
+        max_depth=12,
+        random_state=42,
+        class_weight="balanced",
+        n_jobs=rf_n_jobs,
     )
     gbm = GradientBoostingClassifier(
-        n_estimators=150, max_depth=6, learning_rate=0.1, random_state=42,
+        n_estimators=150,
+        max_depth=6,
+        learning_rate=0.1,
+        random_state=42,
     )
     lr = LogisticRegression(
-        max_iter=1000, random_state=42, class_weight="balanced",
+        max_iter=1000,
+        random_state=42,
+        class_weight="balanced",
     )
 
-    # --- Ensemble via soft voting ---
     print("Training ensemble model (RF + GBM + LR)...")
     ensemble = VotingClassifier(
         estimators=[("rf", rf), ("gbm", gbm), ("lr", lr)],
         voting="soft",
         weights=[2, 2, 1],
     )
-    ensemble.fit(X_train, y_train)
+    final_model = ensemble
 
-    # --- Calibrate probabilities ---
-    print("Calibrating probabilities...")
-    calibrated = CalibratedClassifierCV(ensemble, cv=3, method="isotonic")
-    calibrated.fit(X_train, y_train)
+    if enable_calibration:
+        X_fit, X_calib, y_fit, y_calib = train_test_split(
+            X_train,
+            y_train,
+            test_size=calibration_size,
+            random_state=42,
+            stratify=y_train,
+        )
+        ensemble.fit(X_fit, y_fit)
+        print(
+            "Calibrating probabilities using a held-out split "
+            f"({len(X_calib)} rows, method={calibration_method})..."
+        )
+        final_model = _build_calibrator(ensemble, method=calibration_method)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="The `cv='prefit'` option is deprecated",
+                category=FutureWarning,
+            )
+            final_model.fit(X_calib, y_calib)
+    else:
+        ensemble.fit(X_train, y_train)
+        print("Skipping probability calibration (STRESS_MODEL_ENABLE_CALIBRATION=0).")
 
-    y_pred = calibrated.predict(X_test)
+    y_pred = final_model.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
 
-    # Cross-validation on the base ensemble
-    cv_scores = cross_val_score(ensemble, X_weighted, y, cv=5, scoring="accuracy")
+    cv_mean = None
+    cv_std = None
+    if run_full_cv:
+        print("Running 5-fold cross-validation on the base ensemble...")
+        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        cv_scores = cross_val_score(ensemble, X_weighted, y, cv=cv, scoring="accuracy")
+        cv_mean = float(cv_scores.mean())
+        cv_std = float(cv_scores.std())
 
     print("\nModel training complete.")
     print(f"Test Accuracy: {accuracy:.4f}")
-    print(f"5-Fold CV Accuracy: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
+    if cv_mean is not None and cv_std is not None:
+        print(f"5-Fold CV Accuracy: {cv_mean:.4f} (+/- {cv_std * 2:.4f})")
+    else:
+        print("5-Fold CV Accuracy: skipped (set STRESS_MODEL_RUN_FULL_CV=1 to enable)")
     print("\nClassification report:")
     print(
         classification_report(
@@ -149,38 +225,48 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
     print("\nTop 5 most important questions:")
     print(feature_importance.head())
 
-    # --- Save the calibrated ensemble ---
-    model_path = os.path.join(model_dir, "stress_model.pkl")
+    model_path = stress_model_path()
     with open(model_path, "wb") as file:
-        pickle.dump(calibrated, file)
+        pickle.dump(final_model, file)
 
-    # --- Save the bare RF for SHAP (TreeExplainer needs a tree model) ---
-    shap_model_path = os.path.join(model_dir, "stress_model_shap.pkl")
+    shap_model_path = stress_shap_model_path()
     with open(shap_model_path, "wb") as file:
         pickle.dump(rf_model, file)
 
-    model_sha256 = _sha256_file(model_path)
-    shap_model_sha256 = _sha256_file(shap_model_path)
+    model_sha256 = _sha256_file(str(model_path))
+    shap_model_sha256 = _sha256_file(str(shap_model_path))
 
     metadata = {
         "dataset_path": dataset_path if dataset_path and os.path.exists(dataset_path) else None,
+        "artifact_dir": str(runtime_model_dir),
         "total_rows": int(len(df)),
         "train_rows": int(len(X_train)),
         "test_rows": int(len(X_test)),
         "features": EXPECTED_FEATURE_COLUMNS,
         "target": TARGET_COLUMN,
-        "model_type": "CalibratedEnsemble(RF+GBM+LR)",
+        "python_version": sys.version.split()[0],
+        "sklearn_version": sklearn.__version__,
+        "model_type": (
+            f"CalibratedEnsemble(RF+GBM+LR,{calibration_method})"
+            if enable_calibration
+            else "VotingEnsemble(RF+GBM+LR)"
+        ),
         "input_preprocessing": "question_weighted",
         "ensemble_weights": [2, 2, 1],
+        "calibration_enabled": bool(enable_calibration),
+        "calibration_method": calibration_method if enable_calibration else None,
+        "calibration_size": float(calibration_size) if enable_calibration else None,
+        "full_cv_enabled": bool(run_full_cv),
         "question_weights": {
             feature: float(QUESTION_WEIGHTS[feature]) for feature in EXPECTED_FEATURE_COLUMNS
         },
         "rf_n_estimators": 150,
+        "rf_n_jobs": int(rf_n_jobs),
         "gbm_n_estimators": 150,
         "random_state": 42,
         "accuracy": float(accuracy),
-        "cv_accuracy_mean": float(cv_scores.mean()),
-        "cv_accuracy_std": float(cv_scores.std()),
+        "cv_accuracy_mean": cv_mean,
+        "cv_accuracy_std": cv_std,
         "model_sha256": model_sha256,
         "shap_model_sha256": shap_model_sha256,
         "feature_importance": {
@@ -188,7 +274,7 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
         },
     }
 
-    metadata_path = os.path.join(model_dir, "stress_model_meta.json")
+    metadata_path = stress_meta_path()
     with open(metadata_path, "w", encoding="utf-8") as file:
         json.dump(metadata, file, indent=2)
 
@@ -196,7 +282,7 @@ def train_stress_model(dataset_filename="stress_training_dataset_100k.csv"):
     print(f"SHAP-compatible RF saved to: {shap_model_path}")
     print(f"Training metadata saved to: {metadata_path}")
 
-    return calibrated
+    return final_model
 
 
 if __name__ == "__main__":

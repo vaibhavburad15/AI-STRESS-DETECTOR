@@ -46,8 +46,8 @@ REM Install dependencies
 echo Installing Python dependencies...
 pip install -r requirements.txt
 
-REM Train ML model if not exists
-if not exist "ml_model\stress_model.pkl" (
+REM Train questionnaire model if it has not been created for this environment yet
+if not exist "..\data\runtime_models\stress_model.pkl" (
     echo.
     echo Training ML model (first time only)...
     python -m ml_model.train_model

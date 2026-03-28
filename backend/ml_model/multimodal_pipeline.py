@@ -1,13 +1,6 @@
-import hashlib
-import os
-import pickle
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from sklearn.neural_network import MLPClassifier
-
-from .audio_stress_predictor import audio_stress_predictor
-from .verbal_nn_scorer import verbal_nn_scorer
 
 FUSION_THRESHOLDS = (0.3, 0.55, 0.8)
 
@@ -16,40 +9,24 @@ class MultimodalStressPipeline:
     """Fuse text, audio, and facial features into robust stress scoring for video endpoint."""
 
     def __init__(self):
-        self.fusion_model = self._train_fusion_model()
+        # Keep startup cheap: this pipeline currently uses deterministic weighted
+        # fusion, so there is no reason to train a synthetic model at import time.
+        self._audio_stress_predictor = None
+        self._verbal_nn_scorer = None
 
-    def _train_fusion_model(self) -> MLPClassifier:
-        rng = np.random.default_rng(42)
-        X = []
-        y = []
+    def _get_audio_stress_predictor(self):
+        if self._audio_stress_predictor is None:
+            from .audio_stress_predictor import audio_stress_predictor
 
-        for _ in range(5000):
-            text_avg = rng.uniform(1.0, 5.0)
-            audio_stress = rng.uniform(0.0, 1.0)
-            face_stress = rng.uniform(0.0, 1.0)
-            sentiment_neg = rng.uniform(0.0, 1.0)
-            speaking_rate = rng.uniform(80, 220) / 220.0
+            self._audio_stress_predictor = audio_stress_predictor
+        return self._audio_stress_predictor
 
-            signal = (
-                (text_avg - 1.0) * 0.45
-                + audio_stress * 0.20
-                + face_stress * 0.20
-                + sentiment_neg * 0.10
-                + speaking_rate * 0.05
-            )
-            stress_class = int(np.clip(round(signal / 0.75), 0, 3))
+    def _get_verbal_nn_scorer(self):
+        if self._verbal_nn_scorer is None:
+            from .verbal_nn_scorer import verbal_nn_scorer
 
-            X.append([text_avg, audio_stress, face_stress, sentiment_neg, speaking_rate])
-            y.append(stress_class)
-
-        model = MLPClassifier(
-            hidden_layer_sizes=(32, 16),
-            random_state=42,
-            max_iter=400,
-            learning_rate_init=1e-3,
-        )
-        model.fit(np.array(X, dtype=float), np.array(y, dtype=int))
-        return model
+            self._verbal_nn_scorer = verbal_nn_scorer
+        return self._verbal_nn_scorer
 
     def _normalized_text_signal(self, text_avg: float) -> float:
         # Convert text score range [1, 5] to normalized stress signal [0, 1].
@@ -115,6 +92,9 @@ class MultimodalStressPipeline:
         facial_features: Optional[Dict[str, float]] = None,
         sentiment_features: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
+        verbal_nn_scorer = self._get_verbal_nn_scorer()
+        audio_stress_predictor = self._get_audio_stress_predictor()
+
         text_result = verbal_nn_scorer.score_responses(verbal_responses)
         text_scores = text_result["scores"]
         text_avg = float(np.mean(text_scores))

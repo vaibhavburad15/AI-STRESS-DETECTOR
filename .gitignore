@@ -76,6 +76,7 @@ backend/uploads/
 backend/ml_model/*.pkl
 backend/ml_model/*.h5
 backend/ml_model/*.joblib
+data/runtime_models/
 
 # ===============================
 # Datasets (heavy files)

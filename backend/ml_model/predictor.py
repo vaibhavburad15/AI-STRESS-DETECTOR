@@ -1,12 +1,23 @@
 import os
-import pickle
 import json
 import importlib
-import hashlib
+from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
+from .model_artifacts import (
+    current_sklearn_version,
+    legacy_stress_meta_path,
+    legacy_stress_model_path,
+    legacy_stress_shap_model_path,
+    shared_stress_meta_path,
+    shared_stress_model_path,
+    shared_stress_shap_model_path,
+    stress_meta_path,
+    stress_model_path,
+    stress_shap_model_path,
+)
 from .stress_forecaster import stress_forecaster
 from .questionnaire_config import (
     EXPECTED_FEATURE_COLUMNS,
@@ -15,6 +26,7 @@ from .questionnaire_config import (
     QUESTION_WEIGHTS,
     apply_question_weights,
 )
+from .sklearn_pickle import load_sklearn_pickle, sha256_file
 
 
 class StressPredictor:
@@ -22,8 +34,16 @@ class StressPredictor:
         self.model = None
         self.shap_model = None  # tree-based model for SHAP
         self.shap_explainer = None
-        self.model_path = os.path.join(os.path.dirname(__file__), "stress_model.pkl")
-        self.shap_model_path = os.path.join(os.path.dirname(__file__), "stress_model_shap.pkl")
+        self.model_path = stress_model_path()
+        self.shap_model_path = stress_shap_model_path()
+        self.meta_path = stress_meta_path()
+        self.shared_model_path = shared_stress_model_path()
+        self.shared_shap_model_path = shared_stress_shap_model_path()
+        self.shared_meta_path = shared_stress_meta_path()
+        self.legacy_model_path = legacy_stress_model_path()
+        self.legacy_shap_model_path = legacy_stress_shap_model_path()
+        self.legacy_meta_path = legacy_stress_meta_path()
+        self.sklearn_version = current_sklearn_version()
         self.stress_labels = {
             0: "Low",
             1: "Moderate",
@@ -34,23 +54,19 @@ class StressPredictor:
 
     @staticmethod
     def _sha256_file(path: str) -> str:
-        digest = hashlib.sha256()
-        with open(path, "rb") as file_obj:
-            for chunk in iter(lambda: file_obj.read(8192), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        return sha256_file(path)
 
-    def _expected_hash(self, key: str) -> str:
-        meta_hash = ""
-        meta_path = os.path.join(os.path.dirname(__file__), "stress_model_meta.json")
-        if os.path.exists(meta_path):
-            try:
-                with open(meta_path, "r", encoding="utf-8") as meta_file:
-                    meta = json.load(meta_file)
-                meta_hash = str(meta.get(key, "") or "").strip()
-            except Exception:
-                meta_hash = ""
+    def _load_metadata(self, path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as meta_file:
+                return json.load(meta_file)
+        except Exception:
+            return {}
 
+    def _expected_hash(self, meta: Dict[str, Any], key: str) -> str:
+        meta_hash = str(meta.get(key, "") or "").strip()
         env_key = {
             "model_sha256": "STRESS_MODEL_SHA256",
             "shap_model_sha256": "STRESS_SHAP_MODEL_SHA256",
@@ -58,28 +74,52 @@ class StressPredictor:
         env_hash = os.getenv(env_key, "").strip() if env_key else ""
         return env_hash or meta_hash
 
-    def _load_pickle_with_integrity(self, path: str, expected_hash: str = ""):
-        actual_hash = self._sha256_file(path)
-        if expected_hash and actual_hash.lower() != expected_hash.lower():
-            raise ValueError(f"Integrity check failed for {path}")
+    def _is_runtime_compatible(self, meta: Dict[str, Any]) -> bool:
+        artifact_version = str(meta.get("sklearn_version", "") or "").strip()
+        if not artifact_version:
+            return True
+        return artifact_version == self.sklearn_version
 
-        with open(path, "rb") as file:
-            return pickle.load(file)
+    def _model_candidates(self) -> List[Tuple[Path, Path]]:
+        return [
+            (self.model_path, self.meta_path),
+            (self.shared_model_path, self.shared_meta_path),
+            (self.legacy_model_path, self.legacy_meta_path),
+        ]
+
+    def _shap_model_candidates(self) -> List[Tuple[Path, Path]]:
+        return [
+            (self.shap_model_path, self.meta_path),
+            (self.shared_shap_model_path, self.shared_meta_path),
+            (self.legacy_shap_model_path, self.legacy_meta_path),
+        ]
+
+    def _load_pickle_with_integrity(self, path: str, expected_hash: str = ""):
+        return load_sklearn_pickle(path, expected_hash=expected_hash)
 
     def load_model(self):
         """Load the trained model, retraining automatically if the pickle is invalid."""
-        if not os.path.exists(self.model_path):
-            print("ML model file not found. Training a new model.")
-            self._retrain_model()
-            return
-
-        try:
-            expected = self._expected_hash("model_sha256")
-            self.model = self._load_pickle_with_integrity(self.model_path, expected)
-            print("ML model loaded successfully")
-        except Exception as exc:
-            print(f"Failed to load ML model from {self.model_path}: {exc}")
-            print("Attempting to retrain and replace the invalid model file.")
+        for candidate, meta_path in self._model_candidates():
+            if not candidate.exists():
+                continue
+            meta = self._load_metadata(meta_path)
+            if not self._is_runtime_compatible(meta):
+                print(
+                    "Skipping ML model artifact from a different scikit-learn runtime: "
+                    f"{candidate} (artifact={meta.get('sklearn_version')}, runtime={self.sklearn_version})"
+                )
+                continue
+            try:
+                expected = self._expected_hash(meta, "model_sha256")
+                self.model = self._load_pickle_with_integrity(str(candidate), expected)
+                self.model_path = candidate
+                self.meta_path = meta_path
+                print(f"ML model loaded successfully from {candidate}")
+                break
+            except Exception as exc:
+                print(f"Failed to load ML model from {candidate}: {exc}")
+        else:
+            print("No compatible ML model found. Training a new model.")
             self._retrain_model()
 
         # Load the SHAP-compatible tree model
@@ -87,16 +127,21 @@ class StressPredictor:
 
     def _load_shap_model(self):
         """Load the tree-based sub-model used for SHAP explanations."""
-        if os.path.exists(self.shap_model_path):
+        for candidate, meta_path in self._shap_model_candidates():
+            if not candidate.exists():
+                continue
+            meta = self._load_metadata(meta_path)
+            if not self._is_runtime_compatible(meta):
+                continue
             try:
-                expected = self._expected_hash("shap_model_sha256")
-                self.shap_model = self._load_pickle_with_integrity(self.shap_model_path, expected)
-                print("SHAP tree model loaded successfully")
+                expected = self._expected_hash(meta, "shap_model_sha256")
+                self.shap_model = self._load_pickle_with_integrity(str(candidate), expected)
+                self.shap_model_path = candidate
+                print(f"SHAP tree model loaded successfully from {candidate}")
+                return
             except Exception as exc:
-                print(f"Could not load SHAP model: {exc}")
-                self.shap_model = None
-        else:
-            self.shap_model = None
+                print(f"Could not load SHAP model from {candidate}: {exc}")
+        self.shap_model = None
 
     def _retrain_model(self):
         """Retrain the model from the training dataset and persist a fresh pickle."""

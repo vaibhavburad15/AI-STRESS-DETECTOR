@@ -1,12 +1,12 @@
 import os
 import pickle
-import hashlib
 from typing import Any, Dict, List
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
+from .sklearn_pickle import load_sklearn_pickle, sha256_file
 
 
 class VerbalResponseNNScorer:
@@ -19,20 +19,11 @@ class VerbalResponseNNScorer:
 
     @staticmethod
     def _sha256_file(path: str) -> str:
-        digest = hashlib.sha256()
-        with open(path, "rb") as file_obj:
-            for chunk in iter(lambda: file_obj.read(8192), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        return sha256_file(path)
 
     def _load_pickle_with_integrity(self, path: str):
         expected_hash = os.getenv("VERBAL_SCORER_SHA256", "").strip()
-        actual_hash = self._sha256_file(path)
-        if expected_hash and actual_hash.lower() != expected_hash.lower():
-            raise ValueError("Integrity check failed for verbal scorer model")
-
-        with open(path, "rb") as model_file:
-            return pickle.load(model_file)
+        return load_sklearn_pickle(path, expected_hash=expected_hash)
 
     def _load_or_train(self) -> None:
         if os.path.exists(self.model_path):

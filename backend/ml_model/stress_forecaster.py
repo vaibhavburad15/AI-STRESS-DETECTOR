@@ -1,4 +1,3 @@
-import hashlib
 import os
 import pickle
 from typing import Any, Dict, List
@@ -7,6 +6,7 @@ import numpy as np
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
+from .sklearn_pickle import load_sklearn_pickle, sha256_file
 
 
 class StressForecasterNN:
@@ -19,20 +19,11 @@ class StressForecasterNN:
 
     @staticmethod
     def _sha256_file(path: str) -> str:
-        digest = hashlib.sha256()
-        with open(path, "rb") as file_obj:
-            for chunk in iter(lambda: file_obj.read(8192), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        return sha256_file(path)
 
     def _load_pickle_with_integrity(self, path: str):
         expected_hash = os.getenv("STRESS_FORECASTER_SHA256", "").strip()
-        actual_hash = self._sha256_file(path)
-        if expected_hash and actual_hash.lower() != expected_hash.lower():
-            raise ValueError("Integrity check failed for stress forecaster model")
-
-        with open(path, "rb") as model_file:
-            return pickle.load(model_file)
+        return load_sklearn_pickle(path, expected_hash=expected_hash)
 
     def _load_or_train_model(self) -> Pipeline:
         if os.path.exists(self.model_path):

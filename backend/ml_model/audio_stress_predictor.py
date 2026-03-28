@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import joblib
 import numpy as np
 
 from .audio_features import (
@@ -15,6 +14,7 @@ from .audio_features import (
     predict_chunks,
     preprocess_audio,
 )
+from .sklearn_pickle import load_sklearn_joblib
 
 
 class AudioStressPredictor:
@@ -30,6 +30,7 @@ class AudioStressPredictor:
         self.metadata: Dict[str, Any] = {}
         self._loaded_model_mtime: float | None = None
         self._loaded_scaler_mtime: float | None = None
+        self._load_warning_logged = False
         self.load_model()
 
     def required_features(self) -> list[str]:
@@ -60,12 +61,21 @@ class AudioStressPredictor:
             return
 
         try:
-            self.model = joblib.load(self.model_path)
-            self.scaler = joblib.load(self.scaler_path)
+            self.model = load_sklearn_joblib(self.model_path)
+            self.scaler = load_sklearn_joblib(self.scaler_path)
             self._loaded_model_mtime = self.model_path.stat().st_mtime
             self._loaded_scaler_mtime = self.scaler_path.stat().st_mtime
+            self._load_warning_logged = False
         except Exception as exc:
-            print(f"Failed to load audio stress model assets: {exc}")
+            if exc.__class__.__name__ == "InconsistentVersionWarning":
+                if not self._load_warning_logged:
+                    print(
+                        "Audio stress model assets were trained with a different "
+                        "scikit-learn version; using heuristic audio fallback."
+                    )
+                    self._load_warning_logged = True
+            else:
+                print(f"Failed to load audio stress model assets: {exc}")
             self.model = None
             self.scaler = None
             self._loaded_model_mtime = None
