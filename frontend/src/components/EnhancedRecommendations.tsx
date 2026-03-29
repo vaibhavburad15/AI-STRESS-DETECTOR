@@ -84,8 +84,7 @@ export const EnhancedRecommendations: React.FC<EnhancedRecommendationsProps> = (
     { key: 'immediate', label: 'Right Now', icon: 'Now' },
     { key: 'daily', label: 'Daily Habits', icon: 'Day' },
     { key: 'weekly', label: 'Weekly Goals', icon: 'Week' },
-    { key: 'lifestyle', label: 'Lifestyle', icon: 'Life' },
-    { key: 'professional', label: 'Professional', icon: 'Care' }
+    { key: 'lifestyle', label: 'Lifestyle', icon: 'Life' }
   ];
 
   return (
