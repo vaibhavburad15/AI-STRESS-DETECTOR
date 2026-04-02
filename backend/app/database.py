@@ -21,6 +21,8 @@ from bson import ObjectId
 import os
 from dotenv import load_dotenv
 
+from .nmc_verification import get_verified_doctors_filter
+
 load_dotenv()
 
 # MongoDB connection
@@ -412,7 +414,7 @@ def get_database_stats():
     return {
         "total_users": users_collection.count_documents({}),
         "total_doctors": doctors_collection.count_documents({}),
-        "verified_doctors": doctors_collection.count_documents({"is_verified": True}),
+        "verified_doctors": doctors_collection.count_documents(get_verified_doctors_filter()),
         "total_tests": tests_collection.count_documents({}),
         "total_appointments": appointments_collection.count_documents({}),
         "total_achievements": achievements_collection.count_documents({}),

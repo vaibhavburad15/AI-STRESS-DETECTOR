@@ -167,6 +167,7 @@ def get_appointment_access_state(
     slot_start_at = normalize_datetime(normalized.get("slot_start_at"))
     slot_end_at = normalize_datetime(normalized.get("slot_end_at"))
     access_expires_at = normalize_datetime(normalized.get("access_expires_at"))
+    shared_with_doctor_at = normalize_datetime(normalized.get("shared_with_doctor_at"))
     current_time = normalize_datetime(now) or datetime.now()
     records_shared = bool(normalized.get("records_shared_with_doctor", False))
     status_name = str(normalized.get("status") or "")
@@ -186,12 +187,18 @@ def get_appointment_access_state(
     elif slot_start_at is None or slot_end_at is None or access_expires_at is None:
         message = "Appointment schedule is unavailable."
         active = False
-    elif current_time < slot_start_at:
-        message = "Access opens when the appointment slot starts."
+    elif shared_with_doctor_at is not None and current_time < shared_with_doctor_at:
+        message = "Doctor access will be available once sharing is enabled."
         active = False
     elif current_time > access_expires_at:
         message = "Access closed 1 hour after the appointment slot ended."
         active = False
+    elif slot_start_at is not None and current_time < slot_start_at:
+        message = (
+            "Doctor access is active for this appointment and remains available until "
+            "1 hour after the slot ends."
+        )
+        active = True
     else:
         message = "Doctor access is active for this appointment."
         active = True
@@ -200,6 +207,7 @@ def get_appointment_access_state(
         "slot_start_at": slot_start_at,
         "slot_end_at": slot_end_at,
         "access_expires_at": access_expires_at,
+        "shared_with_doctor_at": shared_with_doctor_at,
         "records_shared_with_doctor": records_shared,
         "can_manage_record_sharing": can_manage_sharing,
         "data_access_active": active,

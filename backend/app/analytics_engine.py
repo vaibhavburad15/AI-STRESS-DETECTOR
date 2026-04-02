@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from collections import Counter
 
+from .nmc_verification import get_active_verified_doctors_filter
+
 
 class AnalyticsEngine:
     """Compute advanced analytics from stress platform data."""
@@ -333,7 +335,7 @@ class AnalyticsEngine:
         preferred = specialization_map.get(worst_cat, ["Psychiatrist"])
 
         # Get verified doctors
-        doctors = list(self.doctors.find({"is_verified": True}))
+        doctors = list(self.doctors.find(get_active_verified_doctors_filter()))
         if not doctors:
             return []
 

@@ -3,7 +3,12 @@ from bson import ObjectId
 from typing import List
 from ..database import users_collection, doctors_collection, tests_collection, appointments_collection
 from ..auth import require_role
-from ..nmc_verification import build_nmc_profile
+from ..nmc_verification import (
+    VERIFICATION_SOURCE_ADMIN,
+    build_nmc_profile,
+    get_verified_doctors_filter,
+    is_doctor_verified,
+)
 from ..analytics_engine import create_analytics_engine
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -18,8 +23,8 @@ async def get_admin_stats(current_user: dict = Depends(require_role(["admin"])))
     # Count totals
     total_users = users_collection.count_documents({})
     total_doctors = doctors_collection.count_documents({})
-    verified_doctors = doctors_collection.count_documents({"is_verified": True})
-    unverified_doctors = doctors_collection.count_documents({"is_verified": False})
+    verified_doctors = doctors_collection.count_documents(get_verified_doctors_filter())
+    unverified_doctors = max(total_doctors - verified_doctors, 0)
     total_tests = tests_collection.count_documents({})
     total_appointments = appointments_collection.count_documents({})
     
@@ -113,7 +118,7 @@ async def get_all_doctors(current_user: dict = Depends(require_role(["admin"])))
             "license_number": doctor["license_number"],
             "state_medical_council": doctor.get("state_medical_council"),
             "specialization": doctor["specialization"],
-            "is_verified": doctor.get("is_verified", False),
+            "is_verified": is_doctor_verified(doctor),
             "nmc_verified": doctor.get("nmc_verified", bool(doctor.get("nmc_verification"))),
             "nmc_profile": doctor.get("nmc_profile") or build_nmc_profile(doctor.get("nmc_verification")),
             "nmc_verification": doctor.get("nmc_verification"),
@@ -134,7 +139,12 @@ async def verify_doctor(doctor_id: str, verified: bool, current_user: dict = Dep
     
     doctors_collection.update_one(
         {"_id": ObjectId(doctor_id)},
-        {"$set": {"is_verified": verified}}
+        {
+            "$set": {
+                "is_verified": verified,
+                "verification_source": VERIFICATION_SOURCE_ADMIN,
+            }
+        }
     )
     
     return {"message": f"Doctor {'verified' if verified else 'unverified'} successfully"}

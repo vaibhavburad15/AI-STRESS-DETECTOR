@@ -74,11 +74,11 @@ const OTPVerificationPage = () => {
     setError('');
 
     try {
-      await authService.verifyOTP(email, otpCode);
+      const response = await authService.verifyOTP(email, otpCode);
       setSuccess(true);
       setTimeout(() => {
         navigate('/login', {
-          state: { message: 'Email verified successfully! You can now log in.' }
+          state: { message: response?.message || 'Email verified successfully! You can now log in.' }
         });
       }, 2000);
     } catch (err: any) {

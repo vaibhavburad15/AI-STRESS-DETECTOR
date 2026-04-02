@@ -35,7 +35,11 @@ from ..recommendation_engine import enhanced_engine
 from ..progress_tracker import ProgressTracker
 from ..email_service import email_service
 from ..sms_service import sms_service
-from ..nmc_verification import build_nmc_profile
+from ..nmc_verification import (
+    get_active_verified_doctors_filter,
+    build_nmc_profile,
+    is_doctor_verified,
+)
 from ..report_generator import report_generator
 from ..analytics_engine import create_analytics_engine
 import logging
@@ -1153,8 +1157,8 @@ async def get_leaderboard(
 
 @router.get("/doctors")
 async def get_doctors(current_user: dict = Depends(require_role(["user"]))):
-    """Get list of admin-approved doctors with full NMC profile"""
-    doctors = list(doctors_collection.find({"is_verified": True}))
+    """Get list of verified doctors with full NMC profile"""
+    doctors = list(doctors_collection.find(get_active_verified_doctors_filter()))
     
     return [
         {
@@ -1165,7 +1169,7 @@ async def get_doctors(current_user: dict = Depends(require_role(["user"]))):
             "state_medical_council": doctor.get("state_medical_council"),
             "specialization": doctor["specialization"],
             "available_slots": doctor.get("available_slots", []),
-            "is_verified": doctor.get("is_verified", False),
+            "is_verified": is_doctor_verified(doctor),
             "nmc_verified": doctor.get("nmc_verified", bool(doctor.get("nmc_verification"))),
             "nmc_profile": doctor.get("nmc_profile") or build_nmc_profile(doctor.get("nmc_verification")),
         }
@@ -1241,7 +1245,7 @@ async def book_appointment(appointment: AppointmentCreate, current_user: dict = 
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
     
-    if not doctor.get("is_verified", False):
+    if not doctor.get("email_verified", False) or not is_doctor_verified(doctor):
         raise HTTPException(status_code=400, detail="Doctor is not verified")
     
     # ✅ FIX: Check for double-booking - ensure slot isn't already booked with correct statuses

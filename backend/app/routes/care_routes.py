@@ -1154,7 +1154,7 @@ def _build_sharing_window_note(appointment: Mapping[str, Any]) -> str | None:
     return (
         "In your dashboard, enable 'Share details with doctor' for this appointment. "
         f"Once enabled, the doctor can view your profile, stress assessments, and medical records "
-        f"during {slot_label} and until {access_deadline}."
+        f"right away and until {access_deadline}. Appointment slot: {slot_label}."
     )
 
 

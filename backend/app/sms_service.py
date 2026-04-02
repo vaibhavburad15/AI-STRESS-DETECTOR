@@ -142,7 +142,7 @@ class SMSService:
 
     def send_welcome_sms(self, phone: str, name: str, user_type: str = "user"):
         if user_type == "doctor":
-            extra = "Your NMC profile is verified and your account is pending admin approval."
+            extra = "Your NMC profile is verified and your doctor account is active."
         else:
             extra = "Take your first stress assessment to get personalized recommendations."
         self._fire(
@@ -177,7 +177,12 @@ class SMSService:
         appointment_time: str,
         sharing_window_note: Optional[str] = None,
     ):
-        note = " Enable sharing in your dashboard for appointment-time access." if sharing_window_note else ""
+        note = (
+            " Enable sharing in your dashboard if you want the doctor to review your "
+            "stress history and medical records."
+            if sharing_window_note
+            else ""
+        )
         self._fire(
             self._send_text_sync,
             phone,

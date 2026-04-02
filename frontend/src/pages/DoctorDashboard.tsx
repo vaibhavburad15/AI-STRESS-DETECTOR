@@ -40,12 +40,12 @@ const DoctorDashboard = () => {
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [selectedDetails, setSelectedDetails] = useState<DoctorSharedDetails | null>(null);
 
-  useEffect(() => {
-    loadAppointments();
-    loadStats();
-  }, []);
-
   const loadAppointments = async () => {
+    if (!user?.id) {
+      setAppointments([]);
+      return;
+    }
+
     try {
       const { data } = await api.get(`/api/doctor/appointments/${user?.id}`);
       setAppointments(Array.isArray(data) ? data : []);
@@ -53,11 +53,46 @@ const DoctorDashboard = () => {
   };
 
   const loadStats = async () => {
+    if (!user?.id) {
+      setStats({
+        total_appointments: 0,
+        pending: 0,
+        approved: 0,
+        completed: 0,
+        rejected: 0,
+      });
+      return;
+    }
+
     try {
       const { data } = await api.get(`/api/doctor/stats/${user?.id}`);
       setStats(data);
     } catch (error) { console.error('Failed to load stats', error); }
   };
+
+  useEffect(() => {
+    if (!user?.id) {
+      return undefined;
+    }
+
+    const refreshDashboard = () => {
+      void Promise.all([loadAppointments(), loadStats()]);
+    };
+
+    refreshDashboard();
+
+    const intervalId = window.setInterval(refreshDashboard, 15000);
+    const handleWindowFocus = () => {
+      refreshDashboard();
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [user?.id]);
 
   const handleUpdateStatus = async (appointmentId: string, status: string, notes?: string) => {
     try {

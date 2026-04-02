@@ -11,6 +11,9 @@ NMC_SEARCH_URL = (
     "https://www.nmc.org.in/MCIRest/open/getDataFromService?service=searchDoctor"
 )
 
+VERIFICATION_SOURCE_AUTO = "nmc_auto"
+VERIFICATION_SOURCE_ADMIN = "admin_manual"
+
 # Council labels are taken from NMC's IMR public dropdown.
 STATE_MEDICAL_COUNCIL_IDS: dict[str, int] = {
     "Andhra Pradesh Medical Council": 1,
@@ -107,6 +110,48 @@ def build_nmc_profile(details: Optional[dict[str, Any]]) -> dict[str, Any]:
         "uprn_no": record.get("uprnNo"),
         "address": record.get("address"),
         "doctor_id": record.get("doctorId"),
+    }
+
+
+def doctor_has_nmc_verification(doctor: Optional[dict[str, Any]]) -> bool:
+    if not doctor:
+        return False
+    return bool(doctor.get("nmc_verified") or doctor.get("nmc_verification"))
+
+
+def is_doctor_verified(doctor: Optional[dict[str, Any]]) -> bool:
+    if not doctor:
+        return False
+
+    # Once a verification source exists, the stored flag is authoritative.
+    if doctor.get("verification_source") is not None:
+        return bool(doctor.get("is_verified", False))
+
+    # Legacy doctors without a source should be treated as verified if they
+    # already passed NMC verification.
+    return bool(doctor.get("is_verified", False) or doctor_has_nmc_verification(doctor))
+
+
+def get_verified_doctors_filter() -> dict[str, Any]:
+    return {
+        "$or": [
+            {"is_verified": True},
+            {
+                "verification_source": None,
+                "nmc_verified": True,
+            },
+            {
+                "verification_source": None,
+                "nmc_verification": {"$exists": True, "$ne": None},
+            },
+        ]
+    }
+
+
+def get_active_verified_doctors_filter() -> dict[str, Any]:
+    return {
+        **get_verified_doctors_filter(),
+        "email_verified": True,
     }
 
 

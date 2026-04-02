@@ -20,8 +20,11 @@ from ..otp_utils import (
 )
 from ..nmc_verification import (
     build_nmc_profile,
+    doctor_has_nmc_verification,
     get_state_medical_councils,
+    is_doctor_verified,
     verify_doctor_registration,
+    VERIFICATION_SOURCE_AUTO,
 )
 from pydantic import BaseModel, EmailStr, ValidationError
 import re
@@ -131,6 +134,36 @@ def _build_user_registration_response(
         "access_token": "",
         "token_type": "bearer"
     }
+
+
+def _sync_legacy_doctor_auto_verification(doctor: Optional[dict]) -> Optional[dict]:
+    if not doctor:
+        return doctor
+
+    if doctor.get("verification_source") is not None:
+        return doctor
+
+    if doctor.get("is_verified", False) or not doctor_has_nmc_verification(doctor):
+        return doctor
+
+    auto_verified_at = datetime.utcnow()
+    doctors_collection.update_one(
+        {"_id": doctor["_id"]},
+        {
+            "$set": {
+                "is_verified": True,
+                "nmc_verified": True,
+                "verification_source": VERIFICATION_SOURCE_AUTO,
+                "doctor_verified_at": auto_verified_at,
+            }
+        },
+    )
+
+    doctor["is_verified"] = True
+    doctor["nmc_verified"] = True
+    doctor["verification_source"] = VERIFICATION_SOURCE_AUTO
+    doctor["doctor_verified_at"] = auto_verified_at
+    return doctor
 
 
 # ── Forgot Password Request Models ───────────────────────────────────────────
@@ -285,7 +318,7 @@ async def register_user_with_document(
 
 @router.post("/register/doctor", response_model=TokenResponse)
 async def register_doctor(doctor: DoctorRegister):
-    """Register a new doctor with NMC verification and admin approval workflow"""
+    """Register a new doctor with automatic NMC-based verification"""
     
     existing_doctor = doctors_collection.find_one({"email": doctor.email})
     if existing_doctor:
@@ -347,11 +380,13 @@ async def register_doctor(doctor: DoctorRegister):
         "available_slots": doctor.available_slots,
         "phone_number": doctor.phone_number or "",
         "role": "doctor",
-        "is_verified": False,
+        "is_verified": True,
         "nmc_verified": True,
         "nmc_verification": nmc_verification["details"],
         "nmc_profile": nmc_profile,
+        "verification_source": VERIFICATION_SOURCE_AUTO,
         "email_verified": False,
+        "doctor_verified_at": datetime.utcnow(),
         "created_at": datetime.utcnow()
     }
     
@@ -370,7 +405,7 @@ async def register_doctor(doctor: DoctorRegister):
             "name": doctor.name,
             "email": doctor.email,
             "role": "doctor",
-            "is_verified": False,
+            "is_verified": True,
             "nmc_verified": True,
             "state_medical_council": doctor.state_medical_council,
             "nmc_profile": nmc_profile,
@@ -379,7 +414,7 @@ async def register_doctor(doctor: DoctorRegister):
         },
         "message": (
             "Registration successful! NMC profile verified. "
-            "Please verify your email for login; account will be activated after admin approval."
+            "Please verify your email to activate doctor login."
         ),
         "access_token": "",
         "token_type": "bearer"
@@ -431,15 +466,22 @@ async def verify_email_with_otp(request: OTPVerify):
             detail="User not found"
         )
     
+    if user_type == "doctor":
+        user = _sync_legacy_doctor_auto_verification(user)
+
     email_service.send_welcome_email(request.email, user["name"], user_type)
     if user.get("phone_number"):
         sms_service.send_welcome_sms(user["phone_number"], user["name"], user_type)
     
     message = "Email verified successfully! You can now log in."
-    if user_type == "doctor" and not user.get("is_verified", False):
+    if user_type == "doctor" and is_doctor_verified(user):
         message = (
-            "Email verified successfully! Your NMC profile is verified and "
-            "your account is pending admin approval."
+            "Email verified successfully! Your doctor account is active and "
+            "your NMC profile is verified."
+        )
+    elif user_type == "doctor":
+        message = (
+            "Email verified successfully! Your doctor account is not verified yet."
         )
 
     return {
@@ -450,7 +492,11 @@ async def verify_email_with_otp(request: OTPVerify):
             "email": user["email"],
             "role": user_type,
             "email_verified": True,
-            "is_verified": user.get("is_verified", False if user_type == "doctor" else True),
+            "is_verified": (
+                is_doctor_verified(user)
+                if user_type == "doctor"
+                else True
+            ),
             "nmc_verified": user.get("nmc_verified", bool(user.get("nmc_verification")))
         }
     }
@@ -512,6 +558,9 @@ async def login(credentials: UserLogin):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
         )
+
+    if role == "doctor":
+        user = _sync_legacy_doctor_auto_verification(user)
     
     if role != "admin" and not user.get("email_verified", False):
         raise HTTPException(
@@ -519,10 +568,10 @@ async def login(credentials: UserLogin):
             detail="Please verify your email before logging in. Check your inbox for the verification code."
         )
     
-    if role == "doctor" and not user.get("is_verified", False):
+    if role == "doctor" and not is_doctor_verified(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is awaiting admin approval. Please check back later."
+            detail="Your doctor account is not verified yet. Please contact support or an admin."
         )
     
     if not role:
@@ -549,7 +598,7 @@ async def login(credentials: UserLogin):
             "location": user.get("location")
         })
     elif role == "doctor":
-        user_response["is_verified"] = user.get("is_verified", False)
+        user_response["is_verified"] = is_doctor_verified(user)
         user_response["nmc_verified"] = user.get("nmc_verified", bool(user.get("nmc_verification")))
         user_response["state_medical_council"] = user.get("state_medical_council")
         user_response["nmc_profile"] = user.get("nmc_profile")
