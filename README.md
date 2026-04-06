@@ -466,9 +466,29 @@ FROM_EMAIL=your_email@gmail.com
 # Optional: SMS Notifications (Fast2SMS)
 SMS_PROVIDER=fast2sms
 FAST2SMS_API_KEY=your_fast2sms_api_key
+FAST2SMS_ENABLE_NON_OTP_SMS=true
 FAST2SMS_ROUTE=q
+FAST2SMS_OTP_ROUTE=otp
+FAST2SMS_NOTIFICATION_ROUTE=q
+FAST2SMS_WELCOME_ROUTE=q
 FAST2SMS_LANGUAGE=english
 FAST2SMS_COUNTRY_CODE=91
+FAST2SMS_SENDER_ID=
+FAST2SMS_NOTIFICATION_SENDER_ID=
+FAST2SMS_NOTIFICATION_ENTITY_ID=
+
+# Optional: Use DLT manual route for welcome/account-verified SMS
+FAST2SMS_WELCOME_SENDER_ID=
+FAST2SMS_WELCOME_TEMPLATE_ID=
+FAST2SMS_WELCOME_ENTITY_ID=
+FAST2SMS_WELCOME_MESSAGE=
+
+# Optional: DLT template IDs for non-OTP notifications
+FAST2SMS_TEMPLATE_APPOINTMENT_BOOKED_ID=
+FAST2SMS_TEMPLATE_APPOINTMENT_APPROVED_ID=
+FAST2SMS_TEMPLATE_APPOINTMENT_REJECTED_ID=
+FAST2SMS_TEMPLATE_APPOINTMENT_COMPLETED_ID=
+FAST2SMS_TEMPLATE_STRESS_RESULT_ID=
 
 # Optional: CORS
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
@@ -692,6 +712,32 @@ Verify that:
 1. The backend is running on the expected port (default: 8000)
 2. `ALLOWED_ORIGINS` in the backend `.env` includes your frontend URL
 3. Check `vite.config.ts` proxy settings if applicable
+
+### Fast2SMS Shows "Sent" But Welcome SMS Is Not Delivered
+If you receive OTP SMS but not welcome, appointment, or stress-result SMS:
+
+1. The backend now treats Fast2SMS success as "submitted" to the gateway, not guaranteed handset delivery.
+2. OTP SMS and non-OTP notifications can use different routes:
+   `FAST2SMS_OTP_ROUTE=otp` is preferred for verification codes.
+   `FAST2SMS_NOTIFICATION_ROUTE=q` keeps the old Quick SMS behavior for informational messages.
+3. Quick SMS acceptance in the dashboard does not always mean the operator delivered the message.
+4. If you do not have DLT set up yet, keep OTP SMS enabled and disable non-OTP SMS:
+   `FAST2SMS_ENABLE_NON_OTP_SMS=false`
+   This keeps verification codes working while stopping welcome/appointment/stress-result SMS from being submitted as Quick SMS.
+5. For reliable non-OTP notifications, use approved DLT templates and configure:
+   `FAST2SMS_NOTIFICATION_ROUTE=dlt_manual`
+   `FAST2SMS_NOTIFICATION_SENDER_ID=YOUR6CHARHEADER`
+   `FAST2SMS_NOTIFICATION_ENTITY_ID=YOUR_ENTITY_ID`
+6. Add the DLT template ID for each message type you send:
+   `FAST2SMS_WELCOME_ROUTE=dlt_manual`
+   `FAST2SMS_WELCOME_TEMPLATE_ID=YOUR_WELCOME_TEMPLATE_ID`
+   `FAST2SMS_TEMPLATE_APPOINTMENT_BOOKED_ID=...`
+   `FAST2SMS_TEMPLATE_APPOINTMENT_APPROVED_ID=...`
+   `FAST2SMS_TEMPLATE_APPOINTMENT_REJECTED_ID=...`
+   `FAST2SMS_TEMPLATE_APPOINTMENT_COMPLETED_ID=...`
+   `FAST2SMS_TEMPLATE_STRESS_RESULT_ID=...`
+7. If you need the welcome SMS text to exactly match a DLT template, set:
+   `FAST2SMS_WELCOME_MESSAGE=Exact approved DLT message text`
 
 ---
 
