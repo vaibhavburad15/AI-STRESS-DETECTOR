@@ -5,6 +5,7 @@ export interface User {
   role: 'user' | 'doctor' | 'admin';
   is_verified?: boolean;
   nmc_verified?: boolean;
+  license_number?: string;
   state_medical_council?: string;
   nmc_profile?: NMCProfile;
 }

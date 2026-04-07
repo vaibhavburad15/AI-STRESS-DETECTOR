@@ -332,9 +332,11 @@ input:focus, textarea:focus, select:focus {
   height: 100vh;
   position: sticky;
   top: 0;
+  z-index: 30;
   flex-shrink: 0;
   flex-direction: column;
   align-items: center;
+  overflow: visible;
   padding: 1.25rem 0.6rem;
   background: var(--sidebar-bg);
   backdrop-filter: blur(20px);
@@ -394,6 +396,9 @@ input:focus, textarea:focus, select:focus {
 
 .userdash-main {
   flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
   padding: 1.5rem;
   max-width: 1400px;
 }
@@ -477,8 +482,9 @@ input:focus, textarea:focus, select:focus {
   min-height: 100vh;
   font-family: var(--font-sans);
   background:
-    radial-gradient(ellipse at 15% 5%, rgba(20, 184, 166, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 85% 90%, var(--gradient-shell-accent1) 0%, transparent 50%),
+    radial-gradient(circle at 10% 8%, rgba(20, 184, 166, 0.11) 0%, transparent 24%),
+    radial-gradient(circle at 82% 12%, rgba(59, 130, 246, 0.10) 0%, transparent 28%),
+    radial-gradient(circle at 70% 100%, rgba(139, 92, 246, 0.08) 0%, transparent 32%),
     var(--gradient-shell);
   transition: background 0.3s ease;
 }
@@ -489,7 +495,7 @@ input:focus, textarea:focus, select:focus {
 }
 
 .doctordash-sidebar {
-  width: 260px;
+  width: 286px;
   height: 100vh;
   position: sticky;
   top: 0;
@@ -500,13 +506,111 @@ input:focus, textarea:focus, select:focus {
   background: var(--sidebar-bg);
   backdrop-filter: blur(20px);
   border-right: 1px solid var(--sidebar-border);
+  box-shadow: 18px 0 50px rgba(15, 23, 42, 0.05);
   transition: background 0.3s, border-color 0.3s;
 }
 
 .doctordash-main {
   flex: 1;
-  padding: 1.5rem 2rem;
+  padding: 2rem;
   overflow-y: auto;
+}
+
+.doctor-hero-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 2rem;
+  border: 1px solid var(--border-glass);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(59, 130, 246, 0.18), transparent 24%),
+    radial-gradient(circle at 15% 12%, rgba(20, 184, 166, 0.16), transparent 26%),
+    linear-gradient(140deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.78) 48%, rgba(239, 246, 255, 0.92) 100%);
+  box-shadow: var(--shadow-card);
+}
+
+[data-theme="dark"] .doctor-hero-card {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(59, 130, 246, 0.16), transparent 24%),
+    radial-gradient(circle at 10% 10%, rgba(20, 184, 166, 0.13), transparent 24%),
+    linear-gradient(145deg, rgba(15, 23, 42, 0.96) 0%, rgba(17, 24, 39, 0.90) 46%, rgba(12, 17, 27, 0.96) 100%);
+}
+
+.doctor-hero-panel,
+.doctor-chip-card,
+.doctor-summary-card,
+.doctor-appointment-card,
+.doctor-empty-state {
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--shadow-card);
+}
+
+.doctor-hero-panel {
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(20px);
+}
+
+.doctor-chip-card {
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(14px);
+  border-radius: 1.5rem;
+}
+
+.doctor-summary-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.82));
+  border-radius: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.doctor-summary-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--stat-accent, #3b82f6), transparent);
+  opacity: 0.95;
+}
+
+.doctor-summary-card:hover,
+.doctor-appointment-card:hover,
+.doctor-chip-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--border-glass-hover);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.doctor-appointment-card {
+  background: var(--bg-glass);
+  border-radius: 1.5rem;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.doctor-empty-state {
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(99, 102, 241, 0.03));
+  border-style: dashed;
+  border-color: var(--border-glass-hover);
+}
+
+[data-theme="dark"] .doctor-hero-panel,
+[data-theme="dark"] .doctor-chip-card,
+[data-theme="dark"] .doctor-summary-card,
+[data-theme="dark"] .doctor-appointment-card,
+[data-theme="dark"] .doctor-empty-state {
+  background-color: rgba(15, 23, 42, 0.58);
+}
+
+[data-theme="dark"] .doctor-summary-card {
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(17, 24, 39, 0.88));
+}
+
+[data-theme="dark"] .doctor-empty-state {
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.12), rgba(14, 165, 233, 0.05));
 }
 
 /* ============================================ */

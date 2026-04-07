@@ -360,16 +360,19 @@ async def register_doctor(doctor: DoctorRegister):
         registration_number=doctor.license_number,
         state_medical_council=doctor.state_medical_council,
     )
-    if not nmc_verification["verified"]:
-        error_detail = nmc_verification["error"] or "Doctor verification failed."
-        error_status = (
-            status.HTTP_503_SERVICE_UNAVAILABLE
-            if "unavailable" in error_detail.lower()
-            else status.HTTP_400_BAD_REQUEST
+    verification_error = nmc_verification.get("error") or "Doctor verification failed."
+    verification_unavailable = (
+        not nmc_verification["verified"]
+        and "unavailable" in verification_error.lower()
+    )
+    if not nmc_verification["verified"] and not verification_unavailable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=verification_error,
         )
-        raise HTTPException(status_code=error_status, detail=error_detail)
-    
+
     nmc_profile = build_nmc_profile(nmc_verification["details"])
+    is_auto_verified = bool(nmc_verification["verified"])
     doctor_dict = {
         "name": doctor.name,
         "email": doctor.email,
@@ -380,17 +383,31 @@ async def register_doctor(doctor: DoctorRegister):
         "available_slots": doctor.available_slots,
         "phone_number": doctor.phone_number or "",
         "role": "doctor",
-        "is_verified": True,
-        "nmc_verified": True,
-        "nmc_verification": nmc_verification["details"],
+        "is_verified": is_auto_verified,
+        "nmc_verified": is_auto_verified,
+        "nmc_verification": nmc_verification["details"] if is_auto_verified else None,
         "nmc_profile": nmc_profile,
-        "verification_source": VERIFICATION_SOURCE_AUTO,
+        "verification_source": (
+            VERIFICATION_SOURCE_AUTO if is_auto_verified else None
+        ),
         "email_verified": False,
-        "doctor_verified_at": datetime.utcnow(),
+        "doctor_verified_at": datetime.utcnow() if is_auto_verified else None,
+        "nmc_verification_error": verification_error if verification_unavailable else None,
         "created_at": datetime.utcnow()
     }
     
-    result = doctors_collection.insert_one(doctor_dict)
+    try:
+        result = doctors_collection.insert_one(doctor_dict)
+    except DuplicateKeyError as exc:
+        detail = "Doctor account already exists."
+        if "email" in str(exc).lower():
+            detail = "Email already registered"
+        elif "license_number" in str(exc).lower():
+            detail = "License number already registered"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from exc
     doctor_id = str(result.inserted_id)
     
     otp = generate_otp()
@@ -405,16 +422,22 @@ async def register_doctor(doctor: DoctorRegister):
             "name": doctor.name,
             "email": doctor.email,
             "role": "doctor",
-            "is_verified": True,
-            "nmc_verified": True,
+            "is_verified": is_auto_verified,
+            "nmc_verified": is_auto_verified,
             "state_medical_council": doctor.state_medical_council,
-            "nmc_profile": nmc_profile,
-            "nmc_verification": nmc_verification["details"],
+            "nmc_profile": nmc_profile if is_auto_verified else None,
+            "nmc_verification": nmc_verification["details"] if is_auto_verified else None,
             "email_verified": False
         },
         "message": (
             "Registration successful! NMC profile verified. "
             "Please verify your email to activate doctor login."
+            if is_auto_verified
+            else (
+                "Registration successful, but the NMC verification service is "
+                "currently unavailable. Please verify your email first. "
+                "Your doctor account will stay pending until an admin verifies it."
+            )
         ),
         "access_token": "",
         "token_type": "bearer"
@@ -469,12 +492,28 @@ async def verify_email_with_otp(request: OTPVerify):
     if user_type == "doctor":
         user = _sync_legacy_doctor_auto_verification(user)
 
-    email_service.send_welcome_email(request.email, user["name"], user_type)
+    doctor_is_verified = (
+        is_doctor_verified(user)
+        if user_type == "doctor"
+        else True
+    )
+
+    email_service.send_welcome_email(
+        request.email,
+        user["name"],
+        user_type,
+        doctor_verified=doctor_is_verified,
+    )
     if user.get("phone_number"):
-        sms_service.send_welcome_sms(user["phone_number"], user["name"], user_type)
+        sms_service.send_welcome_sms(
+            user["phone_number"],
+            user["name"],
+            user_type,
+            doctor_verified=doctor_is_verified,
+        )
     
     message = "Email verified successfully! You can now log in."
-    if user_type == "doctor" and is_doctor_verified(user):
+    if user_type == "doctor" and doctor_is_verified:
         message = (
             "Email verified successfully! Your doctor account is active and "
             "your NMC profile is verified."
@@ -493,7 +532,7 @@ async def verify_email_with_otp(request: OTPVerify):
             "role": user_type,
             "email_verified": True,
             "is_verified": (
-                is_doctor_verified(user)
+                doctor_is_verified
                 if user_type == "doctor"
                 else True
             ),
@@ -600,6 +639,7 @@ async def login(credentials: UserLogin):
     elif role == "doctor":
         user_response["is_verified"] = is_doctor_verified(user)
         user_response["nmc_verified"] = user.get("nmc_verified", bool(user.get("nmc_verification")))
+        user_response["license_number"] = user.get("license_number")
         user_response["state_medical_council"] = user.get("state_medical_council")
         user_response["nmc_profile"] = user.get("nmc_profile")
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -19,6 +19,9 @@ import {
   Sparkles,
   Send,
   ArrowLeft,
+  Moon,
+  Sun,
+  UserRound,
 } from 'lucide-react';
 import { appointmentService, authService } from '../services/api';
 import api from '../services/api';
@@ -28,7 +31,7 @@ import MedicalRecordsManager from '../components/MedicalRecordsManager';
 import AddTestToRecords from '../components/AddTestToRecords';
 import VideoAssessmentModal from '../components/VideoAssessmentModal';
 import { EnhancedRecommendations } from '../components/EnhancedRecommendations';
-import ThemeToggle from '../components/ThemeToggle';
+import { useTheme } from '../context/ThemeContext';
 
 type DashboardTab = 'test' | 'chatbot' | 'history' | 'appointments' | 'records';
 
@@ -70,8 +73,149 @@ const programs: Array<{
   },
 ];
 
+const getUserInitials = (name?: string) => {
+  const parts = (name || '')
+    .split(' ')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) return 'U';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+};
+
+type UserProfileMenuProps = {
+  compact?: boolean;
+  name?: string;
+  onLogout: () => void;
+  onOpenProfile: () => void;
+  onToggleTheme: () => void;
+  theme: 'light' | 'dark';
+};
+
+const UserProfileMenu = ({
+  compact = false,
+  name,
+  onLogout,
+  onOpenProfile,
+  onToggleTheme,
+  theme,
+}: UserProfileMenuProps) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isOpen]);
+
+  const initials = getUserInitials(name);
+
+  return (
+    <div ref={menuRef} className={`relative ${compact ? 'shrink-0' : 'z-[60]'}`}>
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="userdash-avatar hover:scale-105 transition-transform"
+        title="Account menu"
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+      >
+        <span className="text-white font-bold text-sm">{initials}</span>
+      </button>
+
+      {isOpen && (
+        <div
+          className={`absolute top-full z-50 overflow-hidden rounded-2xl border shadow-2xl ${
+            compact ? 'right-0 mt-3 w-56' : 'left-0 mt-3 w-56'
+          }`}
+          style={{
+            background: 'var(--bg-surface)',
+            borderColor: 'var(--border-glass)',
+            boxShadow: '0 24px 60px rgba(15, 23, 42, 0.2)',
+          }}
+          role="menu"
+        >
+          <div className="border-b px-4 py-3" style={{ borderColor: 'var(--border-glass)' }}>
+            <p className="truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {name || 'User'}
+            </p>
+          </div>
+
+          <div className="p-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+                onOpenProfile();
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all hover:bg-blue-500/10"
+              style={{ color: 'var(--text-secondary)' }}
+              role="menuitem"
+            >
+              <UserRound className="h-4 w-4 text-blue-400" />
+              Profile
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+                onToggleTheme();
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all hover:bg-amber-500/10"
+              style={{ color: 'var(--text-secondary)' }}
+              role="menuitem"
+            >
+              {theme === 'dark' ? (
+                <Sun className="h-4 w-4 text-amber-400" />
+              ) : (
+                <Moon className="h-4 w-4 text-slate-500" />
+              )}
+              {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+                onLogout();
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-rose-400 transition-all hover:bg-rose-500/10"
+              role="menuitem"
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const UserDashboard = () => {
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
   const user = authService.getUser();
 
   const [activeTab, setActiveTab] = useState<DashboardTab>('test');
@@ -280,18 +424,13 @@ const UserDashboard = () => {
       <div className="userdash-layout">
         {/* Sidebar */}
         <aside className="userdash-sidebar hidden md:flex">
-          <button
-            type="button"
-            onClick={() => navigate('/account')}
-            className="userdash-avatar hover:scale-105 transition-transform"
-            title="View Account Details"
-          >
-            <span className="text-white font-bold text-sm">
-              {user?.name
-                ? user.name.split(' ').filter((w: string) => w.length > 0).map((w: string) => w[0].toUpperCase()).slice(0, 2).join('')
-                : 'U'}
-            </span>
-          </button>
+          <UserProfileMenu
+            name={user?.name}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            onOpenProfile={() => navigate('/account')}
+            onLogout={handleLogout}
+          />
           <nav className="mt-8 flex flex-col items-center gap-2">
             {tabs.map((tab) => {
               const Icon = tab.icon;
@@ -321,16 +460,15 @@ const UserDashboard = () => {
                 <p className="text-xs text-slate-500">AI Stress Analyzer Dashboard</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <ThemeToggle />
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all" style={{ background: 'var(--bg-glass)', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)' }}
-              >
-                <LogOut className="h-4 w-4" />
-                Logout
-              </button>
+            <div className="md:hidden">
+              <UserProfileMenu
+                compact
+                name={user?.name}
+                theme={theme}
+                onToggleTheme={toggleTheme}
+                onOpenProfile={() => navigate('/account')}
+                onLogout={handleLogout}
+              />
             </div>
           </header>
 

@@ -180,10 +180,18 @@ class EmailService:
     # WELCOME
     # ================================================================
 
-    def send_welcome_email(self, email: str, name: str, user_type: str = "user"):
+    def send_welcome_email(self, email: str, name: str, user_type: str = "user", doctor_verified: bool = True):
         """Send welcome email after verification (ASYNC - non-blocking)"""
         subject = "Welcome to AI Stress Analyzer! 🎉"
         role_text = "valued user" if user_type == "user" else "healthcare professional"
+        status_note = ""
+        if user_type == "doctor" and not doctor_verified:
+            status_note = """
+                    <div class="feature">
+                        <strong>Doctor Verification Pending</strong>
+                        <p>Your email is verified, but an admin must approve your doctor account before doctor login is enabled.</p>
+                    </div>
+            """
         body = f"""
         <!DOCTYPE html>
         <html>
@@ -209,6 +217,7 @@ class EmailService:
                 <div class="content">
                     <h2>Hi {name}! 👋</h2>
                     <p>Your email has been successfully verified. Welcome to our mental health community as a {role_text}!</p>
+                    {status_note}
                     <h3>What's Next?</h3>
                     <div class="feature">
                         <strong>📝 Take Your First Assessment</strong>

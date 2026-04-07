@@ -15,7 +15,7 @@ from typing import Any, cast
 from pymongo import MongoClient, ASCENDING, DESCENDING, TEXT
 from pymongo.collection import Collection
 from pymongo.database import Database
-from pymongo.errors import ServerSelectionTimeoutError
+from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
 from datetime import datetime, timedelta
 from bson import ObjectId
 import os
@@ -163,6 +163,58 @@ medical_record_activities_collection: Collection[dict[str, Any]] = (
 # INDEXES FOR PERFORMANCE (OPTIMIZED)
 # ============================================
 
+def _ensure_unique_progress_index() -> None:
+    """Upgrade the legacy progress compound index to unique when safe."""
+
+    index_name = "user_id_1_recommendation_id_1"
+    index_keys = [
+        ("user_id", ASCENDING),
+        ("recommendation_id", ASCENDING),
+    ]
+    existing_index = progress_collection.index_information().get(index_name)
+
+    if existing_index and existing_index.get("key") == index_keys:
+        if existing_index.get("unique"):
+            return
+
+        duplicate_progress = next(
+            progress_collection.aggregate(
+                [
+                    {
+                        "$group": {
+                            "_id": {
+                                "user_id": "$user_id",
+                                "recommendation_id": "$recommendation_id",
+                            },
+                            "count": {"$sum": 1},
+                        }
+                    },
+                    {"$match": {"count": {"$gt": 1}}},
+                    {"$limit": 1},
+                ]
+            ),
+            None,
+        )
+        if duplicate_progress is not None:
+            print(
+                "  ⚠ Skipping unique progress index upgrade because duplicate "
+                "user/recommendation records already exist."
+            )
+            return
+
+        progress_collection.drop_index(index_name)
+        print("  ↺ Replaced legacy progress index with a unique constraint")
+
+    try:
+        progress_collection.create_index(
+            index_keys,
+            name=index_name,
+            unique=True,
+            background=True,
+        )
+    except OperationFailure as exc:
+        print(f"  ⚠ Could not enforce unique progress index: {exc}")
+
 def create_indexes():
     """Create database indexes for better query performance"""
     
@@ -231,10 +283,7 @@ def create_indexes():
         # ============================================
         # PROGRESS TRACKING INDEXES
         # ============================================
-        progress_collection.create_index([
-            ("user_id", ASCENDING),
-            ("recommendation_id", ASCENDING)
-        ], unique=True, background=True)
+        _ensure_unique_progress_index()
         progress_collection.create_index([("user_id", ASCENDING)], background=True)
         progress_collection.create_index([("status", ASCENDING)], background=True)
         progress_collection.create_index([("started_at", DESCENDING)], background=True)

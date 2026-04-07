@@ -208,9 +208,19 @@ class SMSService:
 
         return self._submit_payload(to_phone, payload)
 
-    def _build_welcome_message(self, name: str, user_type: str = "user") -> str:
-        if user_type == "doctor":
+    def _build_welcome_message(
+        self,
+        name: str,
+        user_type: str = "user",
+        doctor_verified: bool = True,
+    ) -> str:
+        if user_type == "doctor" and doctor_verified:
             extra = "Your NMC profile is verified and your doctor account is active."
+        elif user_type == "doctor":
+            extra = (
+                "Your email is verified. An admin must verify your doctor "
+                "account before login is enabled."
+            )
         else:
             extra = "Take your first stress assessment to get personalized recommendations."
         return f"Welcome {name}! Your AI Stress Analyzer account is verified. {extra}"
@@ -320,8 +330,18 @@ class SMSService:
 
         return self._send_text_sync(to_phone, text_message, route=self.otp_route)
 
-    def _send_welcome_sync(self, to_phone: str, name: str, user_type: str = "user") -> bool:
-        message = self.welcome_message_override or self._build_welcome_message(name, user_type)
+    def _send_welcome_sync(
+        self,
+        to_phone: str,
+        name: str,
+        user_type: str = "user",
+        doctor_verified: bool = True,
+    ) -> bool:
+        message = self.welcome_message_override or self._build_welcome_message(
+            name,
+            user_type,
+            doctor_verified,
+        )
         return self._send_notification_sync(
             to_phone,
             message,
@@ -342,8 +362,14 @@ class SMSService:
         _ = user_type  # Reserved for future user-type-specific templates.
         self._fire(self._send_otp_sync, phone, otp)
 
-    def send_welcome_sms(self, phone: str, name: str, user_type: str = "user"):
-        self._fire(self._send_welcome_sync, phone, name, user_type)
+    def send_welcome_sms(
+        self,
+        phone: str,
+        name: str,
+        user_type: str = "user",
+        doctor_verified: bool = True,
+    ):
+        self._fire(self._send_welcome_sync, phone, name, user_type, doctor_verified)
 
     def send_appointment_booked_sms(
         self,
